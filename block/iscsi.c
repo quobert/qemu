@@ -55,7 +55,9 @@ typedef struct IscsiAIOCB {
     QEMUBH *bh;
     IscsiLun *iscsilun;
     struct scsi_task *task;
+#if !defined(LIBISCSI_FEATURE_IOVECTOR)
     uint8_t *buf;
+#endif
     int status;
     int canceled;
     size_t read_size;
@@ -192,7 +194,9 @@ iscsi_aio_write16_cb(struct iscsi_context *iscsi, int status,
 
     trace_iscsi_aio_write16_cb(iscsi, status, acb, acb->canceled);
 
+#if !defined(LIBISCSI_FEATURE_IOVECTOR)
     g_free(acb->buf);
+#endif
 
     if (acb->canceled != 0) {
         return;
@@ -225,7 +229,9 @@ iscsi_aio_writev(BlockDriverState *bs, int64_t sector_num,
     size_t size;
     uint32_t num_sectors;
     uint64_t lba;
+#if !defined(LIBISCSI_FEATURE_IOVECTOR)
     struct iscsi_data data;
+#endif
 
     acb = qemu_aio_get(&iscsi_aiocb_info, bs, cb, opaque);
     trace_iscsi_aio_writev(iscsi, sector_num, nb_sectors, opaque, acb);
@@ -240,8 +246,11 @@ iscsi_aio_writev(BlockDriverState *bs, int64_t sector_num,
     /* XXX we should pass the iovec to write16 to avoid the extra copy */
     /* this will allow us to get rid of 'buf' completely */
     size = nb_sectors * BDRV_SECTOR_SIZE;
+
+#if !defined(LIBISCSI_FEATURE_IOVECTOR)
     acb->buf = g_malloc(size);
     qemu_iovec_to_buf(acb->qiov, 0, acb->buf, size);
+#endif
 
     acb->task = malloc(sizeof(struct scsi_task));
     if (acb->task == NULL) {
@@ -262,6 +271,17 @@ iscsi_aio_writev(BlockDriverState *bs, int64_t sector_num,
     *(uint32_t *)&acb->task->cdb[10] = htonl(num_sectors);
     acb->task->expxferlen = size;
 
+#if defined(LIBISCSI_FEATURE_IOVECTOR)
+    if (iscsi_scsi_command_async(iscsi, iscsilun->lun, acb->task,
+                                 iscsi_aio_write16_cb,
+                                 NULL,
+                                 acb) != 0) {
+        scsi_free_scsi_task(acb->task);
+        qemu_aio_release(acb);
+        return NULL;
+    }
+    scsi_task_set_iov_out(acb->task, (struct scsi_iovec*) acb->qiov->iov, acb->qiov->niov);
+#else
     data.data = acb->buf;
     data.size = size;
 
@@ -274,6 +294,7 @@ iscsi_aio_writev(BlockDriverState *bs, int64_t sector_num,
         qemu_aio_release(acb);
         return NULL;
     }
+#endif
 
     iscsi_set_events(iscsilun);
 
@@ -312,7 +333,9 @@ iscsi_aio_readv(BlockDriverState *bs, int64_t sector_num,
     struct iscsi_context *iscsi = iscsilun->iscsi;
     IscsiAIOCB *acb;
     size_t qemu_read_size;
+#if !defined(LIBISCSI_FEATURE_IOVECTOR)
     int i;
+#endif
     uint64_t lba;
     uint32_t num_sectors;
 
@@ -328,7 +351,9 @@ iscsi_aio_readv(BlockDriverState *bs, int64_t sector_num,
     acb->bh          = NULL;
     acb->status      = -EINPROGRESS;
     acb->read_size   = qemu_read_size;
+#if !defined(LIBISCSI_FEATURE_IOVECTOR)
     acb->buf         = NULL;
+#endif
 
     /* If LUN blocksize is bigger than BDRV_BLOCK_SIZE a read from QEMU
      * may be misaligned to the LUN, so we may need to read some extra
@@ -383,11 +408,15 @@ iscsi_aio_readv(BlockDriverState *bs, int64_t sector_num,
         return NULL;
     }
 
+#if defined(LIBISCSI_FEATURE_IOVECTOR)
+    scsi_task_set_iov_in(acb->task, (struct scsi_iovec*) acb->qiov->iov, acb->qiov->niov);
+#else
     for (i = 0; i < acb->qiov->niov; i++) {
         scsi_task_add_data_in_buffer(acb->task,
                 acb->qiov->iov[i].iov_len,
                 acb->qiov->iov[i].iov_base);
     }
+#endif
 
     iscsi_set_events(iscsilun);
 
@@ -557,7 +586,9 @@ static BlockDriverAIOCB *iscsi_aio_ioctl(BlockDriverState *bs,
     acb->canceled    = 0;
     acb->bh          = NULL;
     acb->status      = -EINPROGRESS;
+#if !defined(LIBISCSI_FEATURE_IOVECTOR)
     acb->buf         = NULL;
+#endif
     acb->ioh         = buf;
 
     acb->task = malloc(sizeof(struct scsi_task));
