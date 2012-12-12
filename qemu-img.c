@@ -1384,6 +1384,10 @@ static int img_convert(int argc, char **argv)
             uint8_t *buf2;
 
             nb_sectors = total_sectors - sector_num;
+            
+            // verbose output
+            fprintf(stderr,"%ld of %ld sectors converted.\n",sector_num,total_sectors);
+            
             if (nb_sectors <= 0)
                 break;
             if (nb_sectors >= cluster_sectors)
@@ -1454,6 +1458,10 @@ static int img_convert(int argc, char **argv)
 
         for(;;) {
             nb_sectors = total_sectors - sector_num;
+            
+            // verbose output
+            fprintf(stderr,"%ld of %ld sectors converted.\n",sector_num,total_sectors);            
+            
             if (nb_sectors <= 0) {
                 break;
             }
