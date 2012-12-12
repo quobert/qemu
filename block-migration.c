@@ -620,12 +620,18 @@ static int block_save_setup(QEMUFile *f, void *opaque)
     return 0;
 }
 
+#define MAX_WAIT 50 /* ms, half buffered_file limit */
+
 static int block_save_iterate(QEMUFile *f, void *opaque)
 {
     int ret;
+    double bwidth = 0;
+    int i = 0;
 
     DPRINTF("Enter save live iterate submitted %d transferred %d\n",
             block_mig_state.submitted, block_mig_state.transferred);
+
+    bwidth = qemu_get_clock_ns(rt_clock);
 
     ret = flush_blks(f);
     if (ret) {
@@ -652,6 +658,15 @@ static int block_save_iterate(QEMUFile *f, void *opaque)
                 break;
             }
         }
+        if ((i & 63) == 0) {
+            uint64_t t1 = (qemu_get_clock_ns(rt_clock) - bwidth) / 1000000;
+            if (t1 > MAX_WAIT) {
+                DPRINTF("big wait: " PRIu64 " milliseconds, %d iterations\n",
+                        t1, i);
+                break;
+            }
+        }
+        i++;
     }
     if (ret) {
         blk_mig_cleanup();
