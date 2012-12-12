@@ -28,6 +28,7 @@
 #define BLK_MIG_FLAG_DEVICE_BLOCK       0x01
 #define BLK_MIG_FLAG_EOS                0x02
 #define BLK_MIG_FLAG_PROGRESS           0x04
+#define BLK_MIG_FLAG_ZERO_BLOCK         0x08
 
 #define MAX_IS_ALLOCATED_SEARCH 65536
 
@@ -45,6 +46,7 @@ typedef struct BlkMigDevState {
     BlockDriverState *bs;
     int bulk_completed;
     int shared_base;
+    int sparse_enable;
     int64_t cur_sector;
     int64_t cur_dirty;
     int64_t completed_sectors;
@@ -69,6 +71,7 @@ typedef struct BlkMigBlock {
 typedef struct BlkMigState {
     int blk_enable;
     int shared_base;
+    int sparse_enable;
     QSIMPLEQ_HEAD(bmds_list, BlkMigDevState) bmds_list;
     QSIMPLEQ_HEAD(blk_list, BlkMigBlock) blk_list;
     int submitted;
@@ -84,20 +87,56 @@ typedef struct BlkMigState {
 
 static BlkMigState block_mig_state;
 
+#include <emmintrin.h>
+#define VECTYPE        __m128i
+#define ALL_EQ(v1, v2) (_mm_movemask_epi8(_mm_cmpeq_epi8(v1, v2)) == 0xFFFF)
+
+static int is_zero_blk(u_int8_t *bufp)
+{
+    VECTYPE *p = (VECTYPE *)bufp;
+    VECTYPE zero = _mm_setzero_si128();
+    int i;
+
+    for (i = 0; i < BLOCK_SIZE / sizeof(VECTYPE); i++) {
+        if (!ALL_EQ(zero, p[i])) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int total_blocks, zero_blocks, bulk_blocks;
+
 static void blk_send(QEMUFile *f, BlkMigBlock * blk)
 {
     int len;
 
+    int zero_blk=is_zero_blk(blk->buf);
+    
+    total_blocks++;
+    
+    if (zero_blk) zero_blocks++;
+    if (!blk->bmds->bulk_completed) bulk_blocks++;
+    
+    if (zero_blk && blk->bmds->sparse_enable && !blk->bmds->bulk_completed) {
+     return; /* sparse is enabled and block is zero and we are in bulk state */
+    }
+    
     /* sector number and flags */
     qemu_put_be64(f, (blk->sector << BDRV_SECTOR_BITS)
-                     | BLK_MIG_FLAG_DEVICE_BLOCK);
+                     | BLK_MIG_FLAG_DEVICE_BLOCK | (zero_blk*BLK_MIG_FLAG_ZERO_BLOCK));
 
     /* device name */
     len = strlen(blk->bmds->bs->device_name);
     qemu_put_byte(f, len);
     qemu_put_buffer(f, (uint8_t *)blk->bmds->bs->device_name, len);
 
-    qemu_put_buffer(f, blk->buf, BLOCK_SIZE);
+    if (!zero_blk)
+     qemu_put_buffer(f, blk->buf, BLOCK_SIZE);
+    else
+     qemu_fflush(f); /* PL: we need to flush here, otherwise a bunch of zero blocks gets queued until IO_BUF_SIZE is reached and than sent out in bulk,
+                        resultung in slower block migration speed! */
 }
 
 int blk_mig_active(void)
@@ -285,6 +324,7 @@ static void init_blk_migration_it(void *opaque, BlockDriverState *bs)
         bmds->total_sectors = sectors;
         bmds->completed_sectors = 0;
         bmds->shared_base = block_mig_state.shared_base;
+        bmds->sparse_enable = block_mig_state.sparse_enable;
         alloc_aio_bitmap(bmds);
         drive_get_ref(drive_get_by_blockdev(bs));
         bdrv_set_in_use(bs, 1);
@@ -312,6 +352,10 @@ static void init_blk_migration(QEMUFile *f)
     block_mig_state.bulk_completed = 0;
     block_mig_state.total_time = 0;
     block_mig_state.reads = 0;
+
+    total_blocks=0;
+    zero_blocks=0;
+    bulk_blocks=0;
 
     bdrv_iterate(init_blk_migration_it, NULL);
 }
@@ -541,6 +585,9 @@ static void blk_mig_cleanup(void)
         g_free(blk->buf);
         g_free(blk);
     }
+    
+    printf("blockmig: sent %d blocks of which %d blocks where zero and %d where bulk\n",total_blocks,zero_blocks,bulk_blocks);
+    
 }
 
 static void block_migration_cancel(void *opaque)
@@ -670,6 +717,9 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
     int64_t total_sectors = 0;
     int nr_sectors;
     int ret;
+    int buf_is_zeroed = 0;
+
+    buf = g_malloc(BLOCK_SIZE);
 
     do {
         addr = qemu_get_be64(f);
@@ -706,13 +756,20 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
                 nr_sectors = BDRV_SECTORS_PER_DIRTY_CHUNK;
             }
 
-            buf = g_malloc(BLOCK_SIZE);
-
-            qemu_get_buffer(f, buf, BLOCK_SIZE);
-            ret = bdrv_write(bs, addr, buf, nr_sectors);
-
-            g_free(buf);
+            if (flags & BLK_MIG_FLAG_ZERO_BLOCK) {
+			 if (!buf_is_zeroed) 
+			  memset(buf, 0x00, BLOCK_SIZE);
+			 buf_is_zeroed=1;
+            }
+            else {
+             qemu_get_buffer(f, buf, BLOCK_SIZE);
+             buf_is_zeroed=0;
+            }
+             
+            ret = bdrv_write(bs, addr, buf, nr_sectors); 
+             
             if (ret < 0) {
+		        g_free(buf);
                 return ret;
             }
         } else if (flags & BLK_MIG_FLAG_PROGRESS) {
@@ -725,14 +782,17 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
             fflush(stdout);
         } else if (!(flags & BLK_MIG_FLAG_EOS)) {
             fprintf(stderr, "Unknown flags\n");
+            g_free(buf);
             return -EINVAL;
         }
         ret = qemu_file_get_error(f);
         if (ret != 0) {
+			g_free(buf);
             return ret;
         }
     } while (!(flags & BLK_MIG_FLAG_EOS));
 
+    g_free(buf);
     return 0;
 }
 
@@ -740,9 +800,15 @@ static void block_set_params(const MigrationParams *params, void *opaque)
 {
     block_mig_state.blk_enable = params->blk;
     block_mig_state.shared_base = params->shared;
+    block_mig_state.sparse_enable = params->sparse;
+
+    if (params->sparse) printf("enabling sparse block migration\n");
 
     /* shared base means that blk_enable = 1 */
     block_mig_state.blk_enable |= params->shared;
+    
+    /* sparse means that blk_enable== 1 */
+    block_mig_state.blk_enable |= params->sparse;
 }
 
 static bool block_is_active(void *opaque)
