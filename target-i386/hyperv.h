@@ -30,10 +30,12 @@
 void hyperv_enable_vapic_recommended(bool val);
 void hyperv_enable_relaxed_timing(bool val);
 void hyperv_set_spinlock_retries(int val);
+void hyperv_enable_ref_count(bool val);
 #else
 static inline void hyperv_enable_vapic_recommended(bool val) { }
 static inline void hyperv_enable_relaxed_timing(bool val) { }
 static inline void hyperv_set_spinlock_retries(int val) { }
+static inline void hyperv_enable_ref_count(bool val) {}
 #endif
 
 bool hyperv_enabled(void);
@@ -41,5 +43,6 @@ bool hyperv_hypercall_available(void);
 bool hyperv_vapic_recommended(void);
 bool hyperv_relaxed_timing_enabled(void);
 int hyperv_get_spinlock_retries(void);
+bool hyperv_ref_counter_enabled(void);
 
 #endif /* QEMU_HW_HYPERV_H */

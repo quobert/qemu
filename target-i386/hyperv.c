@@ -15,6 +15,7 @@
 static bool hyperv_vapic;
 static bool hyperv_relaxed_timing;
 static int hyperv_spinlock_attempts = HYPERV_SPINLOCK_NEVER_RETRY;
+static bool hyperv_ref_count;
 
 void hyperv_enable_vapic_recommended(bool val)
 {
@@ -34,9 +35,14 @@ void hyperv_set_spinlock_retries(int val)
     }
 }
 
+void hyperv_enable_ref_count(bool val)
+{
+    hyperv_ref_count = val;
+}
+
 bool hyperv_enabled(void)
 {
-    return hyperv_hypercall_available() || hyperv_relaxed_timing_enabled();
+    return hyperv_hypercall_available() || hyperv_relaxed_timing_enabled() || hyperv_ref_counter_enabled();
 }
 
 bool hyperv_hypercall_available(void)
@@ -61,4 +67,9 @@ bool hyperv_relaxed_timing_enabled(void)
 int hyperv_get_spinlock_retries(void)
 {
     return hyperv_spinlock_attempts;
+}
+
+bool hyperv_ref_counter_enabled(void)
+{
+    return hyperv_ref_count;
 }

@@ -1349,6 +1349,8 @@ static int cpu_x86_find_by_name(x86_def_t *x86_cpu_def, const char *cpu_model)
             hyperv_enable_relaxed_timing(true);
         } else if (!strcmp(featurestr, "hv_vapic")) {
             hyperv_enable_vapic_recommended(true);
+        } else if (!strcmp(featurestr, "hv_refcnt")) {
+            hyperv_enable_ref_count(true);            
         } else {
             fprintf(stderr, "feature string `%s' not in format (+feature|-feature|feature=xyz)\n", featurestr);
             goto error;

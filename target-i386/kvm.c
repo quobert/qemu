@@ -460,7 +460,10 @@ int kvm_arch_init_vcpu(CPUX86State *env)
             c->eax |= HV_X64_MSR_HYPERCALL_AVAILABLE;
             c->eax |= HV_X64_MSR_APIC_ACCESS_AVAILABLE;
         }
-
+        if (hyperv_ref_counter_enabled()) {
+            c->eax |= HV_X64_MSR_TIME_REF_COUNT_AVAILABLE;
+            c->eax |= 0x200;
+        }
         c = &cpuid_data.entries[cpuid_i++];
         memset(c, 0, sizeof(*c));
         c->function = HYPERV_CPUID_ENLIGHTMENT_INFO;
