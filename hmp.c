@@ -1074,11 +1074,10 @@ void hmp_migrate(Monitor *mon, const QDict *qdict)
     int detach = qdict_get_try_bool(qdict, "detach", 0);
     int blk = qdict_get_try_bool(qdict, "blk", 0);
     int inc = qdict_get_try_bool(qdict, "inc", 0);
-    int sparse = qdict_get_try_bool(qdict, "sparse", 0);
     const char *uri = qdict_get_str(qdict, "uri");
     Error *err = NULL;
 
-    qmp_migrate(uri, !!blk, blk, !!inc, inc, !!sparse, sparse, false, false, &err);
+    qmp_migrate(uri, !!blk, blk, !!inc, inc, false, false, &err);
     if (err) {
         monitor_printf(mon, "migrate: %s\n", error_get_pretty(err));
         error_free(err);
