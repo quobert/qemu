@@ -67,6 +67,12 @@ typedef struct IscsiAIOCB {
 #endif
 } IscsiAIOCB;
 
+struct IscsiTask {
+    IscsiLun *iscsilun;
+    int status;
+    int complete;
+};
+
 #define NOP_INTERVAL 5000
 #define MAX_NOP_FAILURES 3
 
@@ -700,6 +706,69 @@ iscsi_getlength(BlockDriverState *bs)
     return len;
 }
 
+static void
+iscsi_readcapacity16_cb(struct iscsi_context *iscsi, int status,
+                        void *command_data, void *opaque)
+{
+    struct IscsiTask *itask = opaque;
+    struct scsi_readcapacity16 *rc16;
+    struct scsi_task *task = command_data;
+
+    if (status != 0) {
+        error_report("iSCSI: Failed to read capacity of iSCSI lun. %s",
+                     iscsi_get_error(iscsi));
+        itask->status   = 1;
+        itask->complete = 1;
+        scsi_free_scsi_task(task);
+        return;
+    }
+
+    rc16 = scsi_datain_unmarshall(task);
+    if (rc16 == NULL) {
+        error_report("iSCSI: Failed to unmarshall readcapacity16 data.");
+        itask->status   = 1;
+        itask->complete = 1;
+        scsi_free_scsi_task(task);
+        return;
+    }
+
+    itask->iscsilun->block_size = rc16->block_length;
+    itask->iscsilun->num_blocks = rc16->returned_lba + 1;
+
+    itask->status   = 0;
+    itask->complete = 1;
+    scsi_free_scsi_task(task);
+}
+
+static int iscsi_truncate(BlockDriverState *bs, int64_t offset)
+{
+    IscsiLun *iscsilun = bs->opaque;
+    struct IscsiTask itask;
+    struct scsi_task *task = NULL
+
+    if (iscsilun->type != TYPE_DISK) {
+        return -ENOTSUP;
+    }
+    
+    task = iscsi_readcapacity16_task(iscsilun->iscsi, iscsilun->lun,
+                                 iscsi_readcapacity16_cb, &itask);
+    if (task == NULL) {
+         error_report("iSCSI: failed to send readcapacity16 command.");
+         return -EINVAL;
+    }
+
+    while (!itask.complete) {
+        iscsi_set_events(iscsilun);
+        qemu_aio_wait();
+    }
+
+    if (offset > iscsi_getlength(bs)) {
+           return -EINVAL;
+    }
+
+    return 0;
+}
+
 static int parse_chap(struct iscsi_context *iscsi, const char *target)
 {
     QemuOptsList *list;
@@ -1093,6 +1162,7 @@ static BlockDriver bdrv_iscsi = {
     .create_options  = iscsi_create_options,
 
     .bdrv_getlength  = iscsi_getlength,
+    .bdrv_truncate   = iscsi_truncate,
 
     .bdrv_aio_readv  = iscsi_aio_readv,
     .bdrv_aio_writev = iscsi_aio_writev,
