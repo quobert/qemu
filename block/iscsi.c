@@ -1167,6 +1167,10 @@ static int iscsi_truncate(BlockDriverState *bs, int64_t offset)
         return -ENOTSUP;
     }
 
+    /* ensure all async requests are completed before executing
+     * a sync readcapacity */
+    bdrv_drain_all();
+
     if ((ret = iscsi_readcapacity_sync(iscsilun)) != 0) {
         return ret;
     }
