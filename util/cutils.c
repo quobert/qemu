@@ -143,6 +143,36 @@ int qemu_fdatasync(int fd)
 }
 
 /*
+ * Searches for an area with non-zero content in a buffer
+ *
+ * Attention! The len must be a multiple of 8 * sizeof(VECTYPE) 
+ * and addr must bedue to restriction of optimizations in this function.
+ * 
+ * The return value is the offset of the non-zero area rounded
+ * down to 8 * sizeof(VECTYPE). If the buffer is all zero 
+ * the return value is equal to len.
+ */
+
+size_t buffer_find_nonzero_offset(const void *buf, size_t len)
+{
+    VECTYPE *p = (VECTYPE *)buf;
+    VECTYPE zero = ZERO_SPLAT;
+    size_t i;
+    for (i = 0; i < len / sizeof(VECTYPE); i += 8) {
+		VECTYPE tmp0 = p[i+0] | p[i+1];
+		VECTYPE tmp1 = p[i+2] | p[i+3];
+		VECTYPE tmp2 = p[i+4] | p[i+5];
+		VECTYPE tmp3 = p[i+6] | p[i+7];
+		VECTYPE tmp01 = tmp0 | tmp1;
+		VECTYPE tmp23 = tmp2 | tmp3;
+		if (!ALL_EQ(tmp01 | tmp23, zero)) {
+		    break;
+		}
+    }
+    return i * sizeof(VECTYPE);
+}
+
+/*
  * Checks if a buffer is all zeroes
  *
  * Attention! The len must be a multiple of 4 * sizeof(long) due to

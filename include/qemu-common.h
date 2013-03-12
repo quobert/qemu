@@ -362,6 +362,7 @@ size_t qemu_iovec_from_buf(QEMUIOVector *qiov, size_t offset,
 size_t qemu_iovec_memset(QEMUIOVector *qiov, size_t offset,
                          int fillc, size_t bytes);
 
+size_t buffer_find_nonzero_offset(const void *buf, size_t len);
 bool buffer_is_zero(const void *buf, size_t len);
 
 void qemu_progress_init(int enabled, float min_skip);
