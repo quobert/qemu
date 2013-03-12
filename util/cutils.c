@@ -186,6 +186,11 @@ bool buffer_is_zero(const void *buf, size_t len)
      * latency.
      */
 
+    if (((uintptr_t) buf) % sizeof(VECTYPE) == 0 
+          && len % 8*sizeof(VECTYPE) == 0) {
+        return buffer_find_nonzero_offset(buf, len)==len;
+    }
+
     size_t i;
     long d0, d1, d2, d3;
     const long * const data = buf;
