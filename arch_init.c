@@ -451,7 +451,7 @@ static int ram_save_block(QEMUFile *f, bool last_stage)
                                             RAM_SAVE_FLAG_COMPRESS);
                 qemu_put_byte(f, *p);
                 bytes_sent += 1;
-            } else if (migrate_use_xbzrle()) {
+            } else if (!ram_bulk_stage && migrate_use_xbzrle()) {
                 current_addr = block->offset + offset;
                 bytes_sent = save_xbzrle_page(f, p, current_addr, block,
                                               offset, cont, last_stage);
