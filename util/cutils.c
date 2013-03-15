@@ -186,6 +186,10 @@ bool buffer_is_zero(const void *buf, size_t len)
      * latency.
      */
 
+    if ((const long*) buf) {
+        return false;
+    }
+
     if (((uintptr_t) buf) % sizeof(VECTYPE) == 0 
           && len % 8*sizeof(VECTYPE) == 0) {
         return buffer_find_nonzero_offset(buf, len)==len;
