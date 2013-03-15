@@ -186,7 +186,7 @@ bool buffer_is_zero(const void *buf, size_t len)
      * latency.
      */
 
-    if ((const long*) buf) {
+    if (*((const long*) buf)) {
         return false;
     }
 
