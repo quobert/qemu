@@ -190,6 +190,13 @@ size_t buffer_find_nonzero_offset(const void *buf, size_t len)
  */
 bool buffer_is_zero(const void *buf, size_t len)
 {
+    /* use vector optimized zero check if possible */
+    if (((uintptr_t) buf) % sizeof(VECTYPE) == 0 
+          && len % (BUFFER_FIND_NONZERO_OFFSET_UNROLL_FACTOR
+             * sizeof(VECTYPE)) == 0) {
+        return buffer_find_nonzero_offset(buf, len)==len;
+    }
+
     /*
      * Use long as the biggest available internal data type that fits into the
      * CPU register and unroll the loop to smooth out the effect of memory
