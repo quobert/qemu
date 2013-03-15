@@ -160,7 +160,8 @@ size_t buffer_find_nonzero_offset(const void *buf, size_t len)
     VECTYPE zero = ZERO_SPLAT;
     size_t i;
     
-    assert(len % (8 * sizeof(VECTYPE)) == 0);
+    assert(len % (BUFFER_FIND_NONZERO_OFFSET_UNROLL_FACTOR 
+        * sizeof(VECTYPE)) == 0);
     assert(((uintptr_t) buf) % sizeof(VECTYPE) == 0);
 
     if (*((const long*) buf)) {
