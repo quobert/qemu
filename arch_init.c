@@ -144,21 +144,6 @@ int qemu_read_default_config_files(bool userconfig)
     return 0;
 }
 
-static int is_dup_page(uint8_t *page)
-{
-    VECTYPE *p = (VECTYPE *)page;
-    VECTYPE val = SPLAT(page);
-    int i;
-
-    for (i = 0; i < TARGET_PAGE_SIZE / sizeof(VECTYPE); i++) {
-        if (!ALL_EQ(val, p[i])) {
-            return 0;
-        }
-    }
-
-    return 1;
-}
-
 /* struct contains XBZRLE cache and a static page
    used by the compression */
 static struct {
@@ -443,7 +428,7 @@ static int ram_save_block(QEMUFile *f, bool last_stage)
 
             /* In doubt sent page as normal */
             bytes_sent = -1;
-            if (is_dup_page(p)) {
+            if (buffer_is_zero(p, TARGET_PAGE_SIZE)) {
                 acct_info.dup_pages++;
                 bytes_sent = save_block_hdr(f, block, offset, cont,
                                             RAM_SAVE_FLAG_COMPRESS);
