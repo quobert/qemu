@@ -442,4 +442,28 @@ int64_t pow2floor(int64_t value);
 int uleb128_encode_small(uint8_t *out, uint32_t n);
 int uleb128_decode_small(const uint8_t *in, uint32_t *n);
 
+/* vector definitions */
+#ifdef __ALTIVEC__
+#include <altivec.h>
+#define VECTYPE        vector unsigned char
+#define SPLAT(p)       vec_splat(vec_ld(0, p), 0)
+#define ZERO_SPLAT     vec_splat(vec_ld(0, 0), 0)
+#define ALL_EQ(v1, v2) vec_all_eq(v1, v2)
+/* altivec.h may redefine the bool macro as vector type.
+ * Reset it to POSIX semantics. */
+#undef bool
+#define bool _Bool
+#elif defined __SSE2__
+#include <emmintrin.h>
+#define VECTYPE        __m128i
+#define SPLAT(p)       _mm_set1_epi8(*(p))
+#define ZERO_SPLAT     _mm_setzero_si128()
+#define ALL_EQ(v1, v2) (_mm_movemask_epi8(_mm_cmpeq_epi8(v1, v2)) == 0xFFFF)
+#else
+#define VECTYPE        unsigned long
+#define SPLAT(p)       (*(p) * (~0UL / 255))
+#define ZERO_SPLAT     0x0UL
+#define ALL_EQ(v1, v2) ((v1) == (v2))
+#endif
+
 #endif
