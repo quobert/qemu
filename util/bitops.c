@@ -42,10 +42,30 @@ unsigned long find_next_bit(const unsigned long *addr, unsigned long size,
         size -= BITS_PER_LONG;
         result += BITS_PER_LONG;
     }
-    while (size & ~(BITS_PER_LONG-1)) {
-        if ((tmp = *(p++))) {
-            goto found_middle;
+    while (size >= BITS_PER_LONG) {
+        if ((tmp = *p)) {
+             goto found_middle;
         }
+        if (((uintptr_t) p) % sizeof(VECTYPE) == 0 
+                && size >= BITS_PER_BYTE * sizeof(VECTYPE)
+                   * BUFFER_FIND_NONZERO_OFFSET_UNROLL_FACTOR) {
+            unsigned long tmp2 =
+                buffer_find_nonzero_offset(p, ((size / BITS_PER_BYTE) & 
+                           ~(BUFFER_FIND_NONZERO_OFFSET_UNROLL_FACTOR * 
+                             sizeof(VECTYPE) - 1)));
+            result += tmp2 * BITS_PER_BYTE;
+            size -= tmp2 * BITS_PER_BYTE;
+            p += tmp2 / sizeof(unsigned long);
+            if (!size) {
+                return result;
+            }
+            if (tmp2) {
+                if ((tmp = *p)) {
+                    goto found_middle;
+                }
+            }
+        }
+        p++;
         result += BITS_PER_LONG;
         size -= BITS_PER_LONG;
     }
