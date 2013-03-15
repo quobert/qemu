@@ -432,9 +432,11 @@ static int ram_save_block(QEMUFile *f, bool last_stage)
             bytes_sent = -1;
             if (buffer_is_zero(p, TARGET_PAGE_SIZE)) {
                 acct_info.dup_pages++;
-                bytes_sent = save_block_hdr(f, block, offset, cont,
-                                            RAM_SAVE_FLAG_COMPRESS);
-                qemu_put_byte(f, *p);
+                if (!ram_bulk_stage) {
+                    bytes_sent = save_block_hdr(f, block, offset, cont,
+                                                RAM_SAVE_FLAG_COMPRESS);
+                    qemu_put_byte(f, *p);
+                }
                 bytes_sent += 1;
             } else if (migrate_use_xbzrle()) {
                 current_addr = block->offset + offset;
