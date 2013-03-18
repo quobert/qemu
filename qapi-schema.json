@@ -2316,6 +2316,8 @@
 #
 # @inc: #optional incremental disk copy migration
 #
+# @sparse: #optional skip zero blocks in bulk stage
+#
 # @detach: this argument exists only for compatibility reasons and
 #          is ignored by QEMU
 #
@@ -2324,7 +2326,7 @@
 # Since: 0.14.0
 ##
 { 'command': 'migrate',
-  'data': {'uri': 'str', '*blk': 'bool', '*inc': 'bool', '*detach': 'bool' } }
+  'data': {'uri': 'str', '*blk': 'bool', '*inc': 'bool', '*sparse': 'bool', '*detach': 'bool' } } 
 
 # @xen-save-devices-state:
 #

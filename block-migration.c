@@ -46,6 +46,7 @@ typedef struct BlkMigDevState {
     /* Written during setup phase.  Can be read without a lock.  */
     BlockDriverState *bs;
     int shared_base;
+    int sparse_enable;
     int64_t total_sectors;
     QSIMPLEQ_ENTRY(BlkMigDevState) entry;
 
@@ -78,6 +79,7 @@ typedef struct BlkMigState {
     /* Written during setup phase.  Can be read without a lock.  */
     int blk_enable;
     int shared_base;
+    int sparse_enable;
     QSIMPLEQ_HEAD(bmds_list, BlkMigDevState) bmds_list;
     int64_t total_sector_sum;
 
@@ -88,6 +90,9 @@ typedef struct BlkMigState {
 
     /* Only used by migration thread.  Does not need a lock.  */
     int transferred;
+    int sparse_blocks;
+    int bulk_blocks;
+    
     int prev_progress;
     int bulk_completed;
 
@@ -114,6 +119,15 @@ static void blk_mig_unlock(void)
 static void blk_send(QEMUFile *f, BlkMigBlock * blk)
 {
     int len;
+
+    /* sparse is enabled and block is zero, we are in bulk state
+     * and we are not on a shared base */
+    if (blk->bmds->sparse_enable && !blk->bmds->bulk_completed 
+            && !blk->bmds->shared_base 
+            && buffer_is_zero(blk->buf, BLOCK_SIZE)) {
+        block_mig_state.sparse_blocks++;
+        return;
+    }
 
     /* sector number and flags */
     qemu_put_be64(f, (blk->sector << BDRV_SECTOR_BITS)
@@ -319,6 +333,7 @@ static void init_blk_migration_it(void *opaque, BlockDriverState *bs)
         bmds->total_sectors = sectors;
         bmds->completed_sectors = 0;
         bmds->shared_base = block_mig_state.shared_base;
+        bmds->sparse_enable = block_mig_state.sparse_enable;
         alloc_aio_bitmap(bmds);
         drive_get_ref(drive_get_by_blockdev(bs));
         bdrv_set_in_use(bs, 1);
@@ -344,6 +359,8 @@ static void init_blk_migration(QEMUFile *f)
     block_mig_state.total_sector_sum = 0;
     block_mig_state.prev_progress = -1;
     block_mig_state.bulk_completed = 0;
+    block_mig_state.bulk_blocks = 0;
+    block_mig_state.sparse_blocks = 0;
 
     bdrv_iterate(init_blk_migration_it, NULL);
 }
@@ -519,6 +536,9 @@ static int flush_blks(QEMUFile *f)
 
         block_mig_state.read_done--;
         block_mig_state.transferred++;
+        if (!block_mig_state.bulk_completed) {
+            block_mig_state.bulk_blocks++;
+        }
         assert(block_mig_state.read_done >= 0);
     }
     blk_mig_unlock();
@@ -569,6 +589,8 @@ static void blk_mig_cleanup(void)
         g_free(blk);
     }
     blk_mig_unlock();
+    error_report("blockmig: sent %d blocks, %d sparse blocks skipped, %d blocks sent in bulk stage",
+       block_mig_state.transferred, block_mig_state.sparse_blocks, block_mig_state.bulk_blocks);
 }
 
 static void block_migration_cancel(void *opaque)
@@ -796,6 +818,7 @@ static void block_set_params(const MigrationParams *params, void *opaque)
 {
     block_mig_state.blk_enable = params->blk;
     block_mig_state.shared_base = params->shared;
+    block_mig_state.sparse_enable = params->sparse;
 
     /* shared base means that blk_enable = 1 */
     block_mig_state.blk_enable |= params->shared;
