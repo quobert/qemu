@@ -2442,7 +2442,8 @@ The main json-object contains the following:
          - "transferred": amount transferred (json-int)
          - "remaining": amount remaining (json-int)
          - "total": total (json-int)
-         - "duplicate": number of duplicated pages (json-int)
+         - "duplicate": number of duplicated (zero) pages (json-int)
+         - "skipped": number of skipped zero pages (json-int)
          - "normal" : number of normal pages transferred (json-int)
          - "normal-bytes" : number of normal bytes transferred (json-int)
 - "disk": only present if "status" is "active" and it is a block migration,
