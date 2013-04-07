@@ -200,10 +200,13 @@ static int os_host_main_loop_wait(uint32_t timeout)
     /* If the I/O thread is very busy or we are incorrectly busy waiting in
      * the I/O thread, this can lead to starvation of the BQL such that the
      * VCPU threads never run.  To make sure we can detect the later case,
-     * print a message to the screen.  If we run into this condition, create
-     * a fake timeout in order to give the VCPU threads a chance to run.
+     * print a message to the screen.  If we run into this condition, unlock
+     * the BQL until a non-zero timout is given (indicating the starvation
+     * issue has gome away).
      */
-    if (spin_counter > MAX_MAIN_LOOP_SPIN) {
+    if (timeout > 0) {
+        spin_counter = 0;
+    } else if (spin_counter > MAX_MAIN_LOOP_SPIN) {
         static bool notified;
 
         if (!notified) {
@@ -212,21 +215,18 @@ static int os_host_main_loop_wait(uint32_t timeout)
                     MAX_MAIN_LOOP_SPIN);
             notified = true;
         }
-
-        timeout = 1;
     }
 
-    if (timeout > 0) {
-        spin_counter = 0;
+    if (timeout > 0 || spin_counter > MAX_MAIN_LOOP_SPIN) {
         qemu_mutex_unlock_iothread();
-    } else {
-        spin_counter++;
     }
 
     ret = g_poll((GPollFD *)gpollfds->data, gpollfds->len, timeout);
 
-    if (timeout > 0) {
+    if (timeout > 0 || spin_counter > MAX_MAIN_LOOP_SPIN) {
         qemu_mutex_lock_iothread();
+    } else {
+        spin_counter++;
     }
 
     glib_pollfds_poll();
