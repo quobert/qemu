@@ -594,65 +594,51 @@ int recv_all(int fd, void *_buf, int len1, bool single_read)
 
 typedef struct IOWatchPoll
 {
+    GSource parent;
+
     GSource *src;
-    int max_size;
 
     IOCanReadHandler *fd_can_read;
     void *opaque;
-
-    QTAILQ_ENTRY(IOWatchPoll) node;
 } IOWatchPoll;
-
-static QTAILQ_HEAD(, IOWatchPoll) io_watch_poll_list =
-    QTAILQ_HEAD_INITIALIZER(io_watch_poll_list);
 
 static IOWatchPoll *io_watch_poll_from_source(GSource *source)
 {
-    IOWatchPoll *i;
-
-    QTAILQ_FOREACH(i, &io_watch_poll_list, node) {
-        if (i->src == source) {
-            return i;
-        }
-    }
-
-    return NULL;
+    return container_of(source, IOWatchPoll, parent);
 }
 
 static gboolean io_watch_poll_prepare(GSource *source, gint *timeout_)
 {
     IOWatchPoll *iwp = io_watch_poll_from_source(source);
-
-    iwp->max_size = iwp->fd_can_read(iwp->opaque);
-    if (iwp->max_size == 0) {
+    bool now_active = iwp->fd_can_read(iwp->opaque) > 0;
+    bool was_active = g_source_get_context(iwp->src) != NULL;
+    if (was_active == now_active) {
         return FALSE;
     }
 
-    return g_io_watch_funcs.prepare(source, timeout_);
+    if (now_active) {
+        g_source_attach(iwp->src, NULL);
+    } else {
+        g_source_remove(g_source_get_id(iwp->src));
+    }
+    return FALSE;
 }
 
 static gboolean io_watch_poll_check(GSource *source)
 {
-    IOWatchPoll *iwp = io_watch_poll_from_source(source);
-
-    if (iwp->max_size == 0) {
-        return FALSE;
-    }
-
-    return g_io_watch_funcs.check(source);
+    return FALSE;
 }
 
 static gboolean io_watch_poll_dispatch(GSource *source, GSourceFunc callback,
                                        gpointer user_data)
 {
-    return g_io_watch_funcs.dispatch(source, callback, user_data);
+    abort();
 }
 
 static void io_watch_poll_finalize(GSource *source)
 {
     IOWatchPoll *iwp = io_watch_poll_from_source(source);
-    QTAILQ_REMOVE(&io_watch_poll_list, iwp, node);
-    g_io_watch_funcs.finalize(source);
+    g_source_unref(iwp->src);
 }
 
 static GSourceFuncs io_watch_poll_funcs = {
@@ -669,24 +655,14 @@ static guint io_add_watch_poll(GIOChannel *channel,
                                gpointer user_data)
 {
     IOWatchPoll *iwp;
-    GSource *src;
-    guint tag;
 
-    src = g_io_create_watch(channel, G_IO_IN | G_IO_ERR | G_IO_HUP);
-    g_source_set_funcs(src, &io_watch_poll_funcs);
-    g_source_set_callback(src, (GSourceFunc)fd_read, user_data, NULL);
-    tag = g_source_attach(src, NULL);
-    g_source_unref(src);
-
-    iwp = g_malloc0(sizeof(*iwp));
-    iwp->src = src;
-    iwp->max_size = 0;
+    iwp = (IOWatchPoll *) g_source_new(&io_watch_poll_funcs, sizeof(IOWatchPoll));
     iwp->fd_can_read = fd_can_read;
     iwp->opaque = user_data;
+    iwp->src = g_io_create_watch(channel, G_IO_IN | G_IO_ERR | G_IO_HUP);
+    g_source_set_callback(iwp->src, (GSourceFunc)fd_read, user_data, NULL);
 
-    QTAILQ_INSERT_HEAD(&io_watch_poll_list, iwp, node);
-
-    return tag;
+    return g_source_attach(&iwp->parent, NULL);
 }
 
 #ifndef _WIN32
@@ -3347,6 +3323,7 @@ CharDriverState *qemu_chr_new(const char *label, const char *filename, void (*in
         error_free(err);
     }
     if (chr && qemu_opt_get_bool(opts, "mux", 0)) {
+        qemu_chr_fe_claim_no_fail(chr);
         monitor_init(chr, MONITOR_USE_READLINE);
     }
     return chr;
@@ -3386,6 +3363,29 @@ int qemu_chr_fe_add_watch(CharDriverState *s, GIOCondition cond,
     g_source_unref(src);
 
     return tag;
+}
+
+int qemu_chr_fe_claim(CharDriverState *s)
+{
+    if (s->avail_connections < 1) {
+        return -1;
+    }
+    s->avail_connections--;
+    return 0;
+}
+
+void qemu_chr_fe_claim_no_fail(CharDriverState *s)
+{
+    if (qemu_chr_fe_claim(s) != 0) {
+        fprintf(stderr, "%s: error chardev \"%s\" already used\n",
+                __func__, s->label);
+        exit(1);
+    }
+}
+
+void qemu_chr_fe_release(CharDriverState *s)
+{
+    s->avail_connections++;
 }
 
 void qemu_chr_delete(CharDriverState *chr)
@@ -3436,9 +3436,16 @@ CharDriverState *qemu_chr_find(const char *name)
 CharDriverState *qemu_char_get_next_serial(void)
 {
     static int next_serial;
+    CharDriverState *chr;
 
     /* FIXME: This function needs to go away: use chardev properties!  */
-    return serial_hds[next_serial++];
+
+    while (next_serial < MAX_SERIAL_PORTS && serial_hds[next_serial]) {
+        chr = serial_hds[next_serial++];
+        qemu_chr_fe_claim_no_fail(chr);
+        return chr;
+    }
+    return NULL;
 }
 
 QemuOptsList qemu_chardev_opts = {
