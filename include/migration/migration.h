@@ -25,7 +25,6 @@
 struct MigrationParams {
     bool blk;
     bool shared;
-    bool sparse;
 };
 
 typedef struct MigrationState MigrationState;
