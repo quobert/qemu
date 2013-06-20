@@ -49,6 +49,7 @@ typedef struct IscsiLun {
     uint64_t num_blocks;
     int events;
     QEMUTimer *nop_timer;
+    uint8_t lbpme;
 } IscsiLun;
 
 typedef struct IscsiAIOCB {
@@ -800,6 +801,60 @@ iscsi_getlength(BlockDriverState *bs)
     return len;
 }
 
+static int coroutine_fn iscsi_co_is_allocated(BlockDriverState *bs,
+                                              int64_t sector_num,
+                                              int nb_sectors, int *pnum)
+{
+    IscsiLun *iscsilun = bs->opaque;
+    struct scsi_task *task = NULL;
+    struct scsi_get_lba_status *lbas = NULL;
+    struct scsi_lba_status_descriptor *lbasd = NULL;
+    int ret;
+
+    *pnum = nb_sectors;
+
+    if (iscsilun->lbpme == 0) {
+        return 1;
+    }
+
+    /* in-flight requests could invalidate the lba status result */
+    while (iscsi_process_flush(iscsilun)) {
+        qemu_aio_wait();
+    }
+
+    task = iscsi_get_lba_status_sync(iscsilun->iscsi, iscsilun->lun,
+                                     sector_qemu2lun(sector_num, iscsilun),
+                                     8+16);
+
+    if (task == NULL || task->status != SCSI_STATUS_GOOD) {
+        scsi_free_scsi_task(task);
+        return 1;
+    }
+
+    lbas = scsi_datain_unmarshall(task);
+    if (lbas == NULL) {
+        scsi_free_scsi_task(task);
+        return 1;
+    }
+
+    lbasd = &lbas->descriptors[0];
+
+    if (sector_qemu2lun(sector_num, iscsilun) != lbasd->lba) {
+        return 1;
+    }
+
+    *pnum = lbasd->num_blocks * (iscsilun->block_size / BDRV_SECTOR_SIZE);
+    if (*pnum > nb_sectors) {
+        *pnum = nb_sectors;
+    }
+
+    ret = (lbasd->provisioning == SCSI_PROVISIONING_TYPE_MAPPED) ? 1 : 0;
+
+    scsi_free_scsi_task(task);
+
+    return ret;
+}
+
 static int parse_chap(struct iscsi_context *iscsi, const char *target)
 {
     QemuOptsList *list;
@@ -948,6 +1003,7 @@ static int iscsi_readcapacity_sync(IscsiLun *iscsilun)
                 } else {
                     iscsilun->block_size = rc16->block_length;
                     iscsilun->num_blocks = rc16->returned_lba + 1;
+                    iscsilun->lbpme = rc16->lbpme;
                 }
             }
             break;
@@ -1274,6 +1330,7 @@ static BlockDriver bdrv_iscsi = {
 
     .bdrv_aio_discard = iscsi_aio_discard,
     .bdrv_has_zero_init = iscsi_has_zero_init,
+    .bdrv_co_is_allocated = iscsi_co_is_allocated,
 
 #ifdef __linux__
     .bdrv_ioctl       = iscsi_ioctl,
