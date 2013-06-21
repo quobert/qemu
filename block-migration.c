@@ -29,6 +29,7 @@
 #define BLK_MIG_FLAG_DEVICE_BLOCK       0x01
 #define BLK_MIG_FLAG_EOS                0x02
 #define BLK_MIG_FLAG_PROGRESS           0x04
+#define BLK_MIG_FLAG_BULK_BLOCK         0x08
 
 #define MAX_IS_ALLOCATED_SEARCH 65536
 
@@ -68,6 +69,7 @@ typedef struct BlkMigBlock {
     struct iovec iov;
     QEMUIOVector qiov;
     BlockDriverAIOCB *aiocb;
+    int bulk_completed;
 
     /* Protected by block migration lock.  */
     int ret;
@@ -114,10 +116,15 @@ static void blk_mig_unlock(void)
 static void blk_send(QEMUFile *f, BlkMigBlock * blk)
 {
     int len;
+    uint8_t flags = BLK_MIG_FLAG_DEVICE_BLOCK;
+
+    if (!blk->bulk_completed) {
+        flags |= BLK_MIG_FLAG_BULK_BLOCK;
+    }
 
     /* sector number and flags */
     qemu_put_be64(f, (blk->sector << BDRV_SECTOR_BITS)
-                     | BLK_MIG_FLAG_DEVICE_BLOCK);
+                     | flags);
 
     /* device name */
     len = strlen(blk->bmds->bs->device_name);
@@ -425,6 +432,7 @@ static int mig_save_device_dirty(QEMUFile *f, BlkMigDevState *bmds,
             blk = g_malloc(sizeof(BlkMigBlock));
             blk->buf = g_malloc(BLOCK_SIZE);
             blk->bmds = bmds;
+            blk->bulk_completed = 1;
             blk->sector = sector;
             blk->nr_sectors = nr_sectors;
 
