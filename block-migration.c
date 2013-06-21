@@ -746,6 +746,11 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
     static int banner_printed;
     static BlockDriverState *bs_prev;
     static int64_t total_sectors;
+    static int has_zero_init;
+    static uint64_t blocks_received;
+    static uint64_t blocks_received_bulk;
+    static uint64_t blocks_received_zero;
+    static uint64_t blocks_received_sparse;
     int len, flags;
     char device_name[256];
     int64_t addr;
@@ -781,6 +786,13 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
                                  device_name);
                     return -EINVAL;
                 }
+                has_zero_init = 0;
+                if (flags & BLK_MIG_FLAG_BULK_BLOCK &&
+                    !(flags & BLK_MIG_FLAG_SHARED_BASE)) {
+                    has_zero_init = bdrv_has_zero_init(bs);
+                }
+                DPRINTF("device: %s has_zero_init: %d flags: %d total_sectors: %ld\n",
+                        device_name, has_zero_init, flags, total_sectors);
             }
 
             if (total_sectors - addr < BDRV_SECTORS_PER_DIRTY_CHUNK) {
@@ -789,8 +801,20 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
                 nr_sectors = BDRV_SECTORS_PER_DIRTY_CHUNK;
             }
 
+            blocks_received++;
+            if (flags & BLK_MIG_FLAG_BULK_BLOCK) {
+                blocks_received_bulk++;
+            }
+
             if (flags & BLK_MIG_FLAG_ZERO_BLOCK) {
-                ret = bdrv_write_zeroes(bs, addr, nr_sectors);
+                blocks_received_zero++;
+                if (!has_zero_init || !(flags & BLK_MIG_FLAG_BULK_BLOCK) ||
+                    flags & BLK_MIG_FLAG_SHARED_BASE) {
+                    ret = bdrv_write_zeroes(bs, addr, nr_sectors);
+                } else {
+                    ret = 0;
+                    blocks_received_sparse++;
+                }
             } else {
                 buf = g_malloc(BLOCK_SIZE);
                 qemu_get_buffer(f, buf, BLOCK_SIZE);
@@ -808,6 +832,11 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
             }
             printf("Completed %d %%%c", (int)addr,
                    (addr == 100) ? '\n' : '\r');
+            if (addr == 100) {
+                DPRINTF("received blocks: total %lu, bulk %lu, zero %lu, sparse %lu\n",
+                       blocks_received, blocks_received_bulk, blocks_received_zero,
+                       blocks_received_sparse);
+            }
             fflush(stdout);
         } else if (!(flags & BLK_MIG_FLAG_EOS)) {
             fprintf(stderr, "Unknown block migration flags: %#x\n", flags);
