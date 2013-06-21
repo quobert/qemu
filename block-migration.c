@@ -726,12 +726,13 @@ static uint64_t block_save_pending(QEMUFile *f, void *opaque, uint64_t max_size)
 static int block_load(QEMUFile *f, void *opaque, int version_id)
 {
     static int banner_printed;
+    static BlockDriverState *bs_prev;
+    static int64_t total_sectors;
     int len, flags;
     char device_name[256];
     int64_t addr;
-    BlockDriverState *bs, *bs_prev = NULL;
+    BlockDriverState *bs;
     uint8_t *buf;
-    int64_t total_sectors = 0;
     int nr_sectors;
     int ret;
 
