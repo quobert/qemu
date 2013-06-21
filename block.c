@@ -2918,10 +2918,28 @@ void bdrv_flush_all(void)
 
 int bdrv_has_zero_init(BlockDriverState *bs)
 {
+    int n, ret, nb_sectors;
+    int64_t total_sectors, i;
+
     assert(bs->drv);
 
     if (bs->drv->bdrv_has_zero_init) {
-        return bs->drv->bdrv_has_zero_init(bs);
+        if (bs->drv->bdrv_has_zero_init(bs) == 0) {
+            return 0;
+        }
+    }
+
+    total_sectors = bdrv_getlength(bs) / BDRV_SECTOR_SIZE;
+
+    for (i = 0; i < total_sectors; i += 1 << 26) {
+        nb_sectors = 1 << 26;
+        if (i + nb_sectors > total_sectors) {
+            nb_sectors = total_sectors - i;
+        }
+        ret = bdrv_is_allocated(bs, i, nb_sectors, &n);
+        if (ret || n != nb_sectors) {
+            return 0;
+        }
     }
 
     return 1;
