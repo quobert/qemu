@@ -50,6 +50,7 @@ typedef struct IscsiLun {
     int events;
     QEMUTimer *nop_timer;
     uint8_t lbpme;
+    uint8_t lbprz;
 } IscsiLun;
 
 typedef struct IscsiAIOCB {
@@ -1004,6 +1005,7 @@ static int iscsi_readcapacity_sync(IscsiLun *iscsilun)
                     iscsilun->block_size = rc16->block_length;
                     iscsilun->num_blocks = rc16->returned_lba + 1;
                     iscsilun->lbpme = rc16->lbpme;
+                    iscsilun->lbprz = rc16->lbprz;
                 }
             }
             break;
@@ -1249,7 +1251,8 @@ static int iscsi_truncate(BlockDriverState *bs, int64_t offset)
 
 static int iscsi_has_zero_init(BlockDriverState *bs)
 {
-    return 0;
+    IscsiLun *iscsilun = bs->opaque;
+    return iscsilun->lbprz ? 1 : 0;
 }
 
 static int iscsi_create(const char *filename, QEMUOptionParameter *options)
