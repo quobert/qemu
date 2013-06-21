@@ -31,6 +31,7 @@
 #define BLK_MIG_FLAG_PROGRESS           0x04
 #define BLK_MIG_FLAG_BULK_BLOCK         0x08
 #define BLK_MIG_FLAG_ZERO_BLOCK         0x10
+#define BLK_MIG_FLAG_SHARED_BASE        0x20
 
 #define MAX_IS_ALLOCATED_SEARCH 65536
 
@@ -125,6 +126,10 @@ static void blk_send(QEMUFile *f, BlkMigBlock * blk)
 
     if (buffer_is_zero(blk->buf, BLOCK_SIZE)) {
         flags |= BLK_MIG_FLAG_ZERO_BLOCK;
+    }
+
+    if (blk->bmds->shared_base) {
+        flags |= BLK_MIG_FLAG_SHARED_BASE;
     }
 
     /* sector number and flags */
