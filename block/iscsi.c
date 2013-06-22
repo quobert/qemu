@@ -49,6 +49,11 @@ typedef struct IscsiLun {
     uint64_t num_blocks;
     int events;
     QEMUTimer *nop_timer;
+    uint8_t lbpme;
+    uint8_t lbprz;
+    uint8_t lbpu;
+    uint8_t lbpws;
+    uint8_t lbpws10;
 } IscsiLun;
 
 typedef struct IscsiAIOCB {
@@ -948,6 +953,8 @@ static int iscsi_readcapacity_sync(IscsiLun *iscsilun)
                 } else {
                     iscsilun->block_size = rc16->block_length;
                     iscsilun->num_blocks = rc16->returned_lba + 1;
+                    iscsilun->lbpme = rc16->lbpme;
+                    iscsilun->lbprz = rc16->lbprz;
                 }
             }
             break;
@@ -1128,6 +1135,46 @@ static int iscsi_open(BlockDriverState *bs, QDict *options, int flags)
     if (iscsilun->type == TYPE_MEDIUM_CHANGER ||
         iscsilun->type == TYPE_TAPE) {
         bs->sg = 1;
+    }
+
+    if (iscsilun->lbpme) {
+        struct scsi_inquiry_logical_block_provisioning *inq_lbp;
+        int full_size;
+
+        task = iscsi_inquiry_sync(iscsi, iscsilun->lun, 1,
+                                  SCSI_INQUIRY_PAGECODE_LOGICAL_BLOCK_PROVISIONING,
+                                  64);
+        if (task == NULL || task->status != SCSI_STATUS_GOOD) {
+            error_report("iSCSI: Inquiry command failed : %s",
+                   iscsi_get_error(iscsilun->iscsi));
+            ret = -EINVAL;
+            goto out;
+        }
+        full_size = scsi_datain_getfullsize(task);
+        if (full_size > task->datain.size) {
+            scsi_free_scsi_task(task);
+
+            /* we need more data for the full list */
+            task = iscsi_inquiry_sync(iscsi, iscsilun->lun, 1,
+                                      SCSI_INQUIRY_PAGECODE_LOGICAL_BLOCK_PROVISIONING,
+                                      full_size);
+            if (task == NULL || task->status != SCSI_STATUS_GOOD) {
+                error_report("iSCSI: Inquiry command failed : %s",
+                             iscsi_get_error(iscsilun->iscsi));
+                ret = -EINVAL;
+                goto out;
+            }
+        }
+
+        inq_lbp = scsi_datain_unmarshall(task);
+        if (inq_lbp == NULL) {
+            error_report("iSCSI: failed to unmarshall inquiry datain blob");
+            ret = -EINVAL;
+            goto out;
+        }
+        iscsilun->lbpu = inq_lbp->lbpu;
+        iscsilun->lbpws = inq_lbp->lbpws;
+        iscsilun->lbpws10 = inq_lbp->lbpws10;
     }
 
 #if defined(LIBISCSI_FEATURE_NOP_COUNTER)
