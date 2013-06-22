@@ -56,6 +56,15 @@ typedef struct IscsiLun {
     uint8_t lbpws10;
 } IscsiLun;
 
+typedef struct IscsiTask {
+    IscsiLun *iscsilun;
+    BlockDriverState *bs;
+    int status;
+    int complete;
+    Coroutine *co;
+    struct scsi_lba_status_descriptor lbasd;
+} IscsiTask;
+
 typedef struct IscsiAIOCB {
     BlockDriverAIOCB common;
     QEMUIOVector *qiov;
@@ -805,6 +814,98 @@ iscsi_getlength(BlockDriverState *bs)
     return len;
 }
 
+static void
+iscsi_co_is_allocated_cb(struct iscsi_context *iscsi, int status,
+                        void *command_data, void *opaque)
+{
+    struct IscsiTask *iTask = opaque;
+    struct scsi_task *task = command_data;
+    struct scsi_get_lba_status *lbas = NULL;
+
+    iTask->complete = 1;
+
+    if (status != 0) {
+        error_report("iSCSI: Failed to get_lba_status on iSCSI lun. %s",
+                     iscsi_get_error(iscsi));
+        iTask->status   = 1;
+        goto out;
+    }
+
+    lbas = scsi_datain_unmarshall(task);
+    if (lbas == NULL) {
+        iTask->status   = 1;
+        goto out;
+    }
+
+    memcpy(&iTask->lbasd, &lbas->descriptors[0],
+           sizeof(struct scsi_lba_status_descriptor));
+
+    iTask->status   = 0;
+
+out:
+    scsi_free_scsi_task(task);
+
+    if (iTask->co) {
+        qemu_coroutine_enter(iTask->co, NULL);
+    }
+}
+
+static int coroutine_fn iscsi_co_is_allocated(BlockDriverState *bs,
+                                              int64_t sector_num,
+                                              int nb_sectors, int *pnum)
+{
+    IscsiLun *iscsilun = bs->opaque;
+    struct IscsiTask iTask;
+    int ret;
+
+    *pnum = nb_sectors;
+
+    if (iscsilun->lbpme == 0) {
+        return 1;
+    }
+
+    iTask.iscsilun = iscsilun;
+    iTask.status = 0;
+    iTask.complete = 0;
+    iTask.bs = bs;
+
+    if (iscsi_get_lba_status_task(iscsilun->iscsi, iscsilun->lun,
+                                  sector_qemu2lun(sector_num, iscsilun),
+                                  8 + 16, iscsi_co_is_allocated_cb,
+                                  &iTask) == NULL) {
+        *pnum = 0;
+        return 0;
+    }
+
+    while (!iTask.complete) {
+        iscsi_set_events(iscsilun);
+        iTask.co = qemu_coroutine_self();
+        qemu_coroutine_yield();
+    }
+
+    if (iTask.status != 0) {
+        /* in case the get_lba_status_callout fails (i.e.
+         * because the device is busy or the cmd is not
+         * supported) we pretend all blocks are allocated
+         * for backwards compatiblity */
+        return 1;
+    }
+
+    if (sector_qemu2lun(sector_num, iscsilun) != iTask.lbasd.lba) {
+        *pnum = 0;
+        return 0;
+    }
+
+    *pnum = iTask.lbasd.num_blocks * (iscsilun->block_size / BDRV_SECTOR_SIZE);
+    if (*pnum > nb_sectors) {
+        *pnum = nb_sectors;
+    }
+
+    return (iTask.lbasd.provisioning == SCSI_PROVISIONING_TYPE_MAPPED) ? 1 : 0;
+
+    return ret;
+}
+
 static int parse_chap(struct iscsi_context *iscsi, const char *target)
 {
     QemuOptsList *list;
@@ -1314,6 +1415,8 @@ static BlockDriver bdrv_iscsi = {
 
     .bdrv_getlength  = iscsi_getlength,
     .bdrv_truncate   = iscsi_truncate,
+
+    .bdrv_co_is_allocated = iscsi_co_is_allocated,
 
     .bdrv_aio_readv  = iscsi_aio_readv,
     .bdrv_aio_writev = iscsi_aio_writev,
