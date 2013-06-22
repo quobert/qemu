@@ -249,6 +249,7 @@ iscsi_aio_write16_cb(struct iscsi_context *iscsi, int status,
 
 static int64_t sector_qemu2lun(int64_t sector, IscsiLun *iscsilun)
 {
+    assert((sector * BDRV_SECTOR_SIZE) % iscsilun->block_size == 0);
     return sector * BDRV_SECTOR_SIZE / iscsilun->block_size;
 }
 
@@ -268,6 +269,8 @@ iscsi_aio_writev_acb(IscsiAIOCB *acb)
     acb->bh         = NULL;
     acb->status     = -EINPROGRESS;
     acb->buf        = NULL;
+
+    assert((acb->nb_sectors * BDRV_SECTOR_SIZE) % acb->iscsilun->block_size == 0);
 
     /* this will allow us to get rid of 'buf' completely */
     size = acb->nb_sectors * BDRV_SECTOR_SIZE;
@@ -618,6 +621,8 @@ static int iscsi_aio_discard_acb(IscsiAIOCB *acb) {
     acb->buf        = NULL;
 
     list[0].lba = sector_qemu2lun(acb->sector_num, acb->iscsilun);
+
+    assert((acb->nb_sectors * BDRV_SECTOR_SIZE) % acb->iscsilun->block_size == 0);
     list[0].num = acb->nb_sectors * BDRV_SECTOR_SIZE / acb->iscsilun->block_size;
 
     acb->task = iscsi_unmap_task(iscsi, acb->iscsilun->lun,
@@ -946,6 +951,8 @@ coroutine_fn iscsi_co_write_zeroes(BlockDriverState *bs, int64_t sector_num,
     iTask.status = 0;
     iTask.complete = 0;
     iTask.bs = bs;
+
+    assert((nb_sectors * BDRV_SECTOR_SIZE) % iscsilun->block_size == 0);
 
     list[0].lba = sector_qemu2lun(sector_num, iscsilun);
     list[0].num = nb_sectors * BDRV_SECTOR_SIZE / iscsilun->block_size;
