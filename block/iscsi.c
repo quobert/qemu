@@ -906,6 +906,68 @@ static int coroutine_fn iscsi_co_is_allocated(BlockDriverState *bs,
     return ret;
 }
 
+static void
+iscsi_co_write_zeroes_cb(struct iscsi_context *iscsi, int status,
+                         void *command_data, void *opaque)
+{
+    struct IscsiTask *iTask = opaque;
+    struct scsi_task *task = command_data;
+
+    iTask->complete = 1;
+    iTask->status   = 0;
+
+    if (status != 0) {
+        error_report("iSCSI: Failed to unmap data on iSCSI lun. %s",
+                     iscsi_get_error(iscsi));
+        iTask->status   = 1;
+    }
+
+    scsi_free_scsi_task(task);
+
+    if (iTask->co) {
+        qemu_coroutine_enter(iTask->co, NULL);
+    }
+}
+
+static int
+coroutine_fn iscsi_co_write_zeroes(BlockDriverState *bs, int64_t sector_num,
+                                   int nb_sectors)
+{
+    IscsiLun *iscsilun = bs->opaque;
+    struct IscsiTask iTask;
+    struct unmap_list list[1];
+
+    if (!iscsilun->lbprz || !iscsilun->lbpu) {
+        /* fall back to writev */
+        return -ENOTSUP;
+    }
+
+    iTask.iscsilun = iscsilun;
+    iTask.status = 0;
+    iTask.complete = 0;
+    iTask.bs = bs;
+
+    list[0].lba = sector_qemu2lun(sector_num, iscsilun);
+    list[0].num = nb_sectors * BDRV_SECTOR_SIZE / iscsilun->block_size;
+
+    if (iscsi_unmap_task(iscsilun->iscsi, iscsilun->lun, 0, 0, &list[0], 1,
+                         iscsi_co_write_zeroes_cb, &iTask) == NULL) {
+        return -EIO;
+    }
+
+    while (!iTask.complete) {
+        iscsi_set_events(iscsilun);
+        iTask.co = qemu_coroutine_self();
+        qemu_coroutine_yield();
+    }
+
+    if (iTask.status != 0) {
+        return -EIO;
+    }
+
+    return 0;
+}
+
 static int parse_chap(struct iscsi_context *iscsi, const char *target)
 {
     QemuOptsList *list;
@@ -1417,6 +1479,7 @@ static BlockDriver bdrv_iscsi = {
     .bdrv_truncate   = iscsi_truncate,
 
     .bdrv_co_is_allocated = iscsi_co_is_allocated,
+    .bdrv_co_write_zeroes = iscsi_co_write_zeroes,
 
     .bdrv_aio_readv  = iscsi_aio_readv,
     .bdrv_aio_writev = iscsi_aio_writev,
