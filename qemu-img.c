@@ -1513,9 +1513,13 @@ static int img_convert(int argc, char **argv)
                    If the output is to a host device, we also write out
                    sectors that are entirely 0, since whatever data was
                    already there is garbage, not 0s. */
-                if (!has_zero_init || out_baseimg ||
-                    is_allocated_sectors_min(buf1, n, &n1, min_sparse)) {
-                    ret = bdrv_write(out_bs, sector_num, buf1, n1);
+                int allocated = is_allocated_sectors_min(buf1, n, &n1, min_sparse);
+                if (!has_zero_init || out_baseimg || allocated) {
+                    if (allocated || out_baseimg) {
+                        ret = bdrv_write(out_bs, sector_num, buf1, n1);
+                    } else {
+                        ret = bdrv_write_zeroes(out_bs, sector_num, n1);
+                    }
                     if (ret < 0) {
                         error_report("error while writing sector %" PRId64
                                      ": %s", sector_num, strerror(-ret));
