@@ -29,6 +29,7 @@
 #define BLK_MIG_FLAG_DEVICE_BLOCK       0x01
 #define BLK_MIG_FLAG_EOS                0x02
 #define BLK_MIG_FLAG_PROGRESS           0x04
+#define BLK_MIG_FLAG_ZERO_BLOCK         0x08
 
 #define MAX_IS_ALLOCATED_SEARCH 65536
 
@@ -114,15 +115,28 @@ static void blk_mig_unlock(void)
 static void blk_send(QEMUFile *f, BlkMigBlock * blk)
 {
     int len;
+    int flags = BLK_MIG_FLAG_DEVICE_BLOCK;
+    
+    if (buffer_is_zero(blk->buf, BLOCK_SIZE)) {
+        flags |= BLK_MIG_FLAG_ZERO_BLOCK;
+    }
 
     /* sector number and flags */
     qemu_put_be64(f, (blk->sector << BDRV_SECTOR_BITS)
-                     | BLK_MIG_FLAG_DEVICE_BLOCK);
+                     | flags);
 
     /* device name */
     len = strlen(blk->bmds->bs->device_name);
     qemu_put_byte(f, len);
     qemu_put_buffer(f, (uint8_t *)blk->bmds->bs->device_name, len);
+
+    /* if a block is zero we need to flush here since the network
+     * bandwidth is now a lot higher than the storage device bandwidth.
+     * thus if we queue zero blocks we slow down the migration */
+    if (flags & BLK_MIG_FLAG_ZERO_BLOCK) {
+        qemu_fflush(f);
+        return;
+    }
 
     qemu_put_buffer(f, blk->buf, BLOCK_SIZE);
 }
@@ -762,12 +776,15 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
                 nr_sectors = BDRV_SECTORS_PER_DIRTY_CHUNK;
             }
 
-            buf = g_malloc(BLOCK_SIZE);
+            if (flags & BLK_MIG_FLAG_ZERO_BLOCK) {
+                ret = bdrv_write_zeroes(bs, addr, nr_sectors);
+            } else {
+                buf = g_malloc(BLOCK_SIZE);
+                qemu_get_buffer(f, buf, BLOCK_SIZE);
+                ret = bdrv_write(bs, addr, buf, nr_sectors);
+                g_free(buf);
+            }
 
-            qemu_get_buffer(f, buf, BLOCK_SIZE);
-            ret = bdrv_write(bs, addr, buf, nr_sectors);
-
-            g_free(buf);
             if (ret < 0) {
                 return ret;
             }
