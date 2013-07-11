@@ -292,6 +292,18 @@ static int64_t sector_lun2qemu(int64_t sector, IscsiLun *iscsilun)
     return sector * iscsilun->block_size / BDRV_SECTOR_SIZE;
 }
 
+static bool is_request_lun_aligned(int64_t sector_num, int nb_sectors,
+                                      IscsiLun *iscsilun)
+{
+    if ((sector_num * BDRV_SECTOR_SIZE) % iscsilun->block_size ||
+        (nb_sectors * BDRV_SECTOR_SIZE) % iscsilun->block_size) {
+            error_report("iSCSI misaligned request: iscsilun->block_size %u, sector_num %ld, nb_sectors %d",
+                         iscsilun->block_size, sector_num, nb_sectors);
+            return 0;
+    }
+    return 1;
+}
+
 static int
 iscsi_aio_writev_acb(IscsiAIOCB *acb)
 {
@@ -375,6 +387,10 @@ iscsi_aio_writev(BlockDriverState *bs, int64_t sector_num,
 {
     IscsiLun *iscsilun = bs->opaque;
     IscsiAIOCB *acb;
+
+    if (!is_request_lun_aligned(sector_num, nb_sectors, iscsilun)) {
+        return NULL;
+    }
 
     acb = qemu_aio_get(&iscsi_aiocb_info, bs, cb, opaque);
     trace_iscsi_aio_writev(iscsilun->iscsi, sector_num, nb_sectors, opaque, acb);
@@ -506,6 +522,10 @@ iscsi_aio_readv(BlockDriverState *bs, int64_t sector_num,
 {
     IscsiLun *iscsilun = bs->opaque;
     IscsiAIOCB *acb;
+
+    if (!is_request_lun_aligned(sector_num, nb_sectors, iscsilun)) {
+        return NULL;
+    }
 
     acb = qemu_aio_get(&iscsi_aiocb_info, bs, cb, opaque);
     trace_iscsi_aio_readv(iscsilun->iscsi, sector_num, nb_sectors, opaque, acb);
@@ -774,6 +794,12 @@ static int coroutine_fn iscsi_co_is_allocated(BlockDriverState *bs,
     ret = 1;
     *pnum = nb_sectors;
 
+    if (!is_request_lun_aligned(sector_num, nb_sectors, iscsilun)) {
+        ret = 0;
+        *pnum = 0;
+        goto out;
+    }
+
     /* LUN does not support logical block provisioning */
     if (iscsilun->lbpme == 0) {
         goto out;
@@ -853,6 +879,10 @@ coroutine_fn iscsi_co_discard(BlockDriverState *bs, int64_t sector_num,
     struct unmap_list list;
     uint32_t nb_blocks;
 
+    if (!is_request_lun_aligned(sector_num, nb_sectors, iscsilun)) {
+        return -EINVAL;
+    }
+
     if (!iscsilun->lbpu) {
         return 0;
     }
@@ -902,6 +932,10 @@ coroutine_fn iscsi_co_write_zeroes(BlockDriverState *bs, int64_t sector_num,
                                    int nb_sectors)
 {
     IscsiLun *iscsilun = bs->opaque;
+
+    if (!is_request_lun_aligned(sector_num, nb_sectors, iscsilun)) {
+        return -EINVAL;
+    }
 
     if (!iscsilun->lbprz || !iscsilun->lbpu ||
         !(bs->open_flags & BDRV_O_UNMAP)) {
