@@ -906,6 +906,21 @@ retry:
     return 0;
 }
 
+static int
+coroutine_fn iscsi_co_write_zeroes(BlockDriverState *bs, int64_t sector_num,
+                                   int nb_sectors)
+{
+    IscsiLun *iscsilun = bs->opaque;
+
+    if (!iscsilun->lbprz || !iscsilun->lbpu ||
+        !(bs->open_flags & BDRV_O_UNMAP)) {
+        /* fall back to writev */
+        return -ENOTSUP;
+    }
+
+    return iscsi_co_discard(bs, sector_num, nb_sectors);
+}
+
 static int parse_chap(struct iscsi_context *iscsi, const char *target)
 {
     QemuOptsList *list;
@@ -1452,6 +1467,7 @@ static BlockDriver bdrv_iscsi = {
 
     .bdrv_co_is_allocated = iscsi_co_is_allocated,
     .bdrv_co_discard      = iscsi_co_discard,
+    .bdrv_co_write_zeroes = iscsi_co_write_zeroes,
 
     .bdrv_aio_readv  = iscsi_aio_readv,
     .bdrv_aio_writev = iscsi_aio_writev,
