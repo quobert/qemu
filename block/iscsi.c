@@ -49,6 +49,12 @@ typedef struct IscsiLun {
     uint64_t num_blocks;
     int events;
     QEMUTimer *nop_timer;
+    uint8_t lbpme;
+    uint8_t lbprz;
+    uint8_t lbpu;
+    uint8_t lbpws;
+    uint8_t lbpws10;
+    uint32_t max_unmap;
 } IscsiLun;
 
 typedef struct IscsiAIOCB {
@@ -73,6 +79,7 @@ typedef struct IscsiAIOCB {
 #define NOP_INTERVAL 5000
 #define MAX_NOP_FAILURES 3
 #define ISCSI_CMD_RETRIES 5
+#define ISCSI_MAX_UNMAP 131072
 
 static void
 iscsi_bh_cb(void *p)
@@ -948,6 +955,8 @@ static int iscsi_readcapacity_sync(IscsiLun *iscsilun)
                 } else {
                     iscsilun->block_size = rc16->block_length;
                     iscsilun->num_blocks = rc16->returned_lba + 1;
+                    iscsilun->lbpme = rc16->lbpme;
+                    iscsilun->lbprz = rc16->lbprz;
                 }
             }
             break;
@@ -999,6 +1008,37 @@ static QemuOptsList runtime_opts = {
         { /* end of list */ }
     },
 };
+
+static struct scsi_task *iscsi_do_inquiry(struct iscsi_context *iscsi,
+                                          int lun, int evpd, int pc) {
+        int full_size;
+        struct scsi_task *task = NULL;
+        task = iscsi_inquiry_sync(iscsi, lun, evpd, pc, 64);
+        if (task == NULL || task->status != SCSI_STATUS_GOOD) {
+            goto fail;
+        }
+        full_size = scsi_datain_getfullsize(task);
+        if (full_size > task->datain.size) {
+            scsi_free_scsi_task(task);
+
+            /* we need more data for the full list */
+            task = iscsi_inquiry_sync(iscsi, lun, evpd, pc, full_size);
+            if (task == NULL || task->status != SCSI_STATUS_GOOD) {
+                goto fail;
+            }
+        }
+
+        return task;
+
+fail:
+        error_report("iSCSI: Inquiry command failed : %s",
+                     iscsi_get_error(iscsi));
+        if (task) {
+            scsi_free_scsi_task(task);
+            return NULL;
+        }
+        return NULL;
+}
 
 /*
  * We support iscsi url's on the form
@@ -1128,6 +1168,49 @@ static int iscsi_open(BlockDriverState *bs, QDict *options, int flags)
     if (iscsilun->type == TYPE_MEDIUM_CHANGER ||
         iscsilun->type == TYPE_TAPE) {
         bs->sg = 1;
+    }
+
+    if (iscsilun->lbpme) {
+        struct scsi_inquiry_logical_block_provisioning *inq_lbp;
+        task = iscsi_do_inquiry(iscsilun->iscsi, iscsilun->lun, 1,
+                                SCSI_INQUIRY_PAGECODE_LOGICAL_BLOCK_PROVISIONING);
+        if (task == NULL) {
+            ret = -EINVAL;
+            goto out;
+        }
+        inq_lbp = scsi_datain_unmarshall(task);
+        if (inq_lbp == NULL) {
+            error_report("iSCSI: failed to unmarshall inquiry datain blob");
+            ret = -EINVAL;
+            goto out;
+        }
+        iscsilun->lbpu = inq_lbp->lbpu;
+        iscsilun->lbpws = inq_lbp->lbpws;
+        iscsilun->lbpws10 = inq_lbp->lbpws10;
+        scsi_free_scsi_task(task);
+        task = NULL;
+    }
+
+    if (iscsilun->lbpu) {
+        struct scsi_inquiry_block_limits *inq_bl;
+        task = iscsi_do_inquiry(iscsilun->iscsi, iscsilun->lun, 1,
+                                SCSI_INQUIRY_PAGECODE_BLOCK_LIMITS);
+        if (task == NULL) {
+            ret = -EINVAL;
+            goto out;
+        }
+        inq_bl = scsi_datain_unmarshall(task);
+        if (inq_bl == NULL) {
+            error_report("iSCSI: failed to unmarshall inquiry datain blob");
+            ret = -EINVAL;
+            goto out;
+        }
+        iscsilun->max_unmap = inq_bl->max_unmap;
+        if (iscsilun->max_unmap == 0xffffffff) {
+            iscsilun->max_unmap = ISCSI_MAX_UNMAP;
+        }
+        scsi_free_scsi_task(task);
+        task = NULL;
     }
 
 #if defined(LIBISCSI_FEATURE_NOP_COUNTER)
