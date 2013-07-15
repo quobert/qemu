@@ -613,10 +613,15 @@
 #          Disabled by default. Experimental: may (or may not) be renamed after
 #          further testing is complete. (since 1.6)
 #
+# @zero-blocks: During storage migration encode blocks of zeroes efficiently. This
+#          essentially saves 1MB of zeroes per block on the wire. Enabling requires
+#          source and target VM to support this feature. Disabled by default. (since 1.6)
+#
+#
 # Since: 1.2
 ##
 { 'enum': 'MigrationCapability',
-  'data': ['xbzrle', 'x-rdma-pin-all'] }
+  'data': ['xbzrle', 'x-rdma-pin-all', 'zero-blocks'] }
 
 ##
 # @MigrationCapabilityStatus
