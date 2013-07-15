@@ -1342,7 +1342,8 @@ static int img_convert(int argc, char **argv)
         goto out;
     }
 
-    flags = BDRV_O_RDWR;
+    flags = BDRV_O_RDWR | BDRV_O_UNMAP;
+
     ret = bdrv_parse_cache_flags(cache, &flags);
     if (ret < 0) {
         error_report("Invalid cache option: %s", cache);
@@ -1442,7 +1443,60 @@ static int img_convert(int argc, char **argv)
         /* signal EOF to align */
         bdrv_write_compressed(out_bs, 0, NULL, 0);
     } else {
+        BlockDriverInfo bdi;
+
         int has_zero_init = bdrv_has_zero_init(out_bs);
+
+        /* if the target has no zero init by default check if we
+         * can discard blocks to zeroize the device */
+        if (!has_zero_init && !out_baseimg &&
+            bdrv_get_info(out_bs, &bdi) == 0 &&
+            bdi.discard_zeroes && bdi.max_unmap > 0) {
+            int64_t target_size = bdrv_getlength(out_bs) / BDRV_SECTOR_SIZE;
+            int64_t sector_num2 = -1;
+            int n;
+            sector_num = 0;
+            for (;;) {
+                nb_sectors = target_size - sector_num;
+                if (nb_sectors <= 0) {
+                    has_zero_init = 1;
+                    break;
+                }
+                if (nb_sectors > INT_MAX) {
+                    nb_sectors = INT_MAX;
+                }
+                if (!bdrv_is_allocated(out_bs, sector_num, nb_sectors, &n)) {
+                    if (!n) {
+                        /* an error occured, continue with has_zero_init = 0 */
+                        break;
+                    }
+                    sector_num += n;
+                    continue;
+                }
+                if (sector_num == sector_num2) {
+                    /* some drivers allow a discard to silently fail.
+                     * double-check that we do not try to discard the
+                     * same sectors twice. if thats the case
+                     * continue with has_zero_init = 0 */
+                    break;
+                }
+                sector_num2 = sector_num;
+                while (n > 0) {
+                    nb_sectors = n;
+                    if (nb_sectors > bdi.max_unmap) {
+                        nb_sectors = bdi.max_unmap;
+                    }
+                    ret = bdrv_discard(out_bs, sector_num2, nb_sectors);
+                    if (ret < 0) {
+                        error_report("error while discarding at sector %" PRId64 ": %s",
+                                     sector_num, strerror(-ret));
+                        goto out;
+                    }
+                    sector_num2 += nb_sectors;
+                    n -= nb_sectors;;
+                }
+            }
+        }
 
         sector_num = 0; // total number of sectors converted so far
         nb_sectors = total_sectors - sector_num;
