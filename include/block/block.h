@@ -18,6 +18,11 @@ typedef struct BlockDriverInfo {
     /* offset at which the VM state can be saved (0 if not possible) */
     int64_t vm_state_offset;
     bool is_dirty;
+    /* do discarded blocks read back as zeroes? */
+    bool discard_zeroes;
+    /* maximum number of sectors that can be discarded at once */
+    int max_unmap;
+
 } BlockDriverInfo;
 
 typedef struct BlockFragInfo {
