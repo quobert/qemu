@@ -227,6 +227,20 @@ struct BlockDriver {
     QLIST_ENTRY(BlockDriver) list;
 };
 
+struct BlockLimits {
+    /* maximum number of sectors that can be discarded at once */
+    int max_discard;
+
+    /* optimal alignment for discard requests in sectors */
+    int64_t discard_alignment;
+
+    /* maximum number of sectors that can zeroized at once */
+    int max_write_zeroes;
+
+    /* optimal alignment for write zeroes requests in sectors */
+    int64_t write_zeroes_alignment;
+};
+
 /*
  * Note: the function bdrv_append() copies and swaps contents of
  * BlockDriverStates, so if you add new fields to this struct, please
@@ -279,6 +293,9 @@ struct BlockDriverState {
     uint64_t nr_ops[BDRV_MAX_IOTYPE];
     uint64_t total_time_ns[BDRV_MAX_IOTYPE];
     uint64_t wr_highest_sector;
+
+    /* I/O Limits */
+    struct BlockLimits bl;
 
     /* Whether the disk can expand beyond total_sectors */
     int growable;
