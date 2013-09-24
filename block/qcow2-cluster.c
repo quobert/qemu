@@ -1601,7 +1601,7 @@ static int expand_zero_clusters_in_l1(BlockDriverState *bs, uint64_t *l1_table,
             }
 
             ret = bdrv_write_zeroes(bs->file, offset / BDRV_SECTOR_SIZE,
-                                    s->cluster_sectors);
+                                    s->cluster_sectors, 0);
             if (ret < 0) {
                 qcow2_free_clusters(bs, offset, s->cluster_size,
                         QCOW2_DISCARD_ALWAYS);
