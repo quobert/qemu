@@ -211,6 +211,19 @@ struct BlockDriver {
      */
     int (*bdrv_has_zero_init)(BlockDriverState *bs);
 
+    /*
+     * Returns true if discarded blocks read back as zeroes.
+     */
+    bool (*bdrv_has_discard_zeroes)(BlockDriverState *bs);
+
+    /*
+     * Returns true if the driver can optimize writing zeroes by discarding
+     * sectors. It is additionally required that the block device is
+     * opened with BDRV_O_UNMAP and the that write zeroes request carries
+     * the BDRV_REQ_MAY_UNMAP flag for this to work.
+     */
+    bool (*bdrv_has_discard_write_zeroes)(BlockDriverState *bs);
+
     QLIST_ENTRY(BlockDriver) list;
 };
 

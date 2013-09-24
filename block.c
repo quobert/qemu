@@ -3101,6 +3101,35 @@ int bdrv_has_zero_init(BlockDriverState *bs)
     return 0;
 }
 
+bool bdrv_has_discard_zeroes(BlockDriverState *bs)
+{
+    assert(bs->drv);
+
+    if (bs->backing_hd) {
+        return false;
+    }
+    if (bs->drv->bdrv_has_discard_zeroes) {
+        return bs->drv->bdrv_has_discard_zeroes(bs);
+    }
+
+    return false;
+}
+
+bool bdrv_has_discard_write_zeroes(BlockDriverState *bs)
+{
+    assert(bs->drv);
+
+    if (bs->backing_hd || !(bs->open_flags & BDRV_O_UNMAP)) {
+        return false;
+    }
+
+    if (bs->drv->bdrv_has_discard_write_zeroes) {
+        return bs->drv->bdrv_has_discard_write_zeroes(bs);
+    }
+
+    return false;
+}
+
 typedef struct BdrvCoGetBlockStatusData {
     BlockDriverState *bs;
     BlockDriverState *base;
