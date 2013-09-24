@@ -1449,6 +1449,18 @@ static int iscsi_has_zero_init(BlockDriverState *bs)
     return 0;
 }
 
+static bool iscsi_has_discard_zeroes(BlockDriverState *bs)
+{
+    IscsiLun *iscsilun = bs->opaque;
+    return !!iscsilun->lbprz;
+}
+
+static bool iscsi_has_discard_write_zeroes(BlockDriverState *bs)
+{
+    IscsiLun *iscsilun = bs->opaque;
+    return iscsilun->lbprz && iscsilun->lbp.lbpws;
+}
+
 static int iscsi_create(const char *filename, QEMUOptionParameter *options,
                         Error **errp)
 {
@@ -1534,7 +1546,9 @@ static BlockDriver bdrv_iscsi = {
     .bdrv_aio_writev = iscsi_aio_writev,
     .bdrv_aio_flush  = iscsi_aio_flush,
 
-    .bdrv_has_zero_init = iscsi_has_zero_init,
+    .bdrv_has_zero_init            = iscsi_has_zero_init,
+    .bdrv_has_discard_zeroes       = iscsi_has_discard_zeroes,
+    .bdrv_has_discard_write_zeroes = iscsi_has_discard_write_zeroes,
 
 #ifdef __linux__
     .bdrv_ioctl       = iscsi_ioctl,
