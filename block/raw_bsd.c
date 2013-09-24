@@ -131,6 +131,16 @@ static int raw_has_zero_init(BlockDriverState *bs)
     return bdrv_has_zero_init(bs->file);
 }
 
+static bool raw_has_discard_zeroes(BlockDriverState *bs)
+{
+    return bdrv_has_discard_zeroes(bs->file);
+}
+
+static bool raw_has_discard_write_zeroes(BlockDriverState *bs)
+{
+    return bdrv_has_discard_write_zeroes(bs->file);
+}
+
 static int raw_create(const char *filename, QEMUOptionParameter *options,
                       Error **errp)
 {
@@ -165,28 +175,30 @@ static int raw_probe(const uint8_t *buf, int buf_size, const char *filename)
 }
 
 static BlockDriver bdrv_raw = {
-    .format_name          = "raw",
-    .bdrv_probe           = &raw_probe,
-    .bdrv_reopen_prepare  = &raw_reopen_prepare,
-    .bdrv_open            = &raw_open,
-    .bdrv_close           = &raw_close,
-    .bdrv_create          = &raw_create,
-    .bdrv_co_readv        = &raw_co_readv,
-    .bdrv_co_writev       = &raw_co_writev,
-    .bdrv_co_write_zeroes = &raw_co_write_zeroes,
-    .bdrv_co_discard      = &raw_co_discard,
-    .bdrv_co_get_block_status = &raw_co_get_block_status,
-    .bdrv_truncate        = &raw_truncate,
-    .bdrv_getlength       = &raw_getlength,
-    .bdrv_get_info        = &raw_get_info,
-    .bdrv_is_inserted     = &raw_is_inserted,
-    .bdrv_media_changed   = &raw_media_changed,
-    .bdrv_eject           = &raw_eject,
-    .bdrv_lock_medium     = &raw_lock_medium,
-    .bdrv_ioctl           = &raw_ioctl,
-    .bdrv_aio_ioctl       = &raw_aio_ioctl,
-    .create_options       = &raw_create_options[0],
-    .bdrv_has_zero_init   = &raw_has_zero_init
+    .format_name                   = "raw",
+    .bdrv_probe                    = &raw_probe,
+    .bdrv_reopen_prepare           = &raw_reopen_prepare,
+    .bdrv_open                     = &raw_open,
+    .bdrv_close                    = &raw_close,
+    .bdrv_create                   = &raw_create,
+    .bdrv_co_readv                 = &raw_co_readv,
+    .bdrv_co_writev                = &raw_co_writev,
+    .bdrv_co_write_zeroes          = &raw_co_write_zeroes,
+    .bdrv_co_discard               = &raw_co_discard,
+    .bdrv_co_get_block_status      = &raw_co_get_block_status,
+    .bdrv_truncate                 = &raw_truncate,
+    .bdrv_getlength                = &raw_getlength,
+    .bdrv_get_info                 = &raw_get_info,
+    .bdrv_is_inserted              = &raw_is_inserted,
+    .bdrv_media_changed            = &raw_media_changed,
+    .bdrv_eject                    = &raw_eject,
+    .bdrv_lock_medium              = &raw_lock_medium,
+    .bdrv_ioctl                    = &raw_ioctl,
+    .bdrv_aio_ioctl                = &raw_aio_ioctl,
+    .create_options                = &raw_create_options[0],
+    .bdrv_has_zero_init            = &raw_has_zero_init,
+    .bdrv_has_discard_zeroes       = &raw_has_discard_zeroes,
+    .bdrv_has_discard_write_zeroes = &raw_has_discard_write_zeroes,
 };
 
 static void bdrv_raw_init(void)
