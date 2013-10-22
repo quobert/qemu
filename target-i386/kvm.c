@@ -437,7 +437,8 @@ static bool hyperv_hypercall_available(X86CPU *cpu)
 static bool hyperv_enabled(X86CPU *cpu)
 {
     return hyperv_hypercall_available(cpu) ||
-           cpu->hyperv_relaxed_timing;
+           cpu->hyperv_relaxed_timing ||
+           cpu->hyperv_ref_count;
 }
 
 #define KVM_MAX_CPUID_ENTRIES  100
@@ -495,6 +496,10 @@ int kvm_arch_init_vcpu(CPUState *cs)
         if (cpu->hyperv_vapic) {
             c->eax |= HV_X64_MSR_HYPERCALL_AVAILABLE;
             c->eax |= HV_X64_MSR_APIC_ACCESS_AVAILABLE;
+        }
+        if (cpu->hyperv_ref_count) {
+            c->eax |= HV_X64_MSR_TIME_REF_COUNT_AVAILABLE;
+            c->eax |= 0x200;
         }
 
         c = &cpuid_data.entries[cpuid_i++];
