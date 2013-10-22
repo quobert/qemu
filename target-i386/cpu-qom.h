@@ -69,6 +69,7 @@ typedef struct X86CPU {
     bool hyperv_vapic;
     bool hyperv_relaxed_timing;
     int hyperv_spinlock_attempts;
+    bool hyperv_ref_count;
 
     /* if true the CPUID code directly forward host cache leaves to the guest */
     bool cache_info_passthrough;

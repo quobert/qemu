@@ -1737,6 +1737,8 @@ static void cpu_x86_parse_featurestr(X86CPU *cpu, char *features, Error **errp)
             cpu->hyperv_relaxed_timing = true;
         } else if (!strcmp(featurestr, "hv_vapic")) {
             cpu->hyperv_vapic = true;
+        } else if (!strcmp(featurestr, "hv_refcnt")) {
+            cpu->hyperv_ref_count = true;
         } else {
             error_setg(errp, "feature string `%s' not in format (+feature|"
                        "-feature|feature=xyz)", featurestr);
