@@ -4364,7 +4364,7 @@ int coroutine_fn bdrv_co_discard(BlockDriverState *bs, int64_t sector_num,
                 ret = co.ret;
             }
         }
-        if (ret) {
+        if (ret && ret != -ENOTSUP) {
             return ret;
         }
 
