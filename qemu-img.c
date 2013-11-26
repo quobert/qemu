@@ -100,7 +100,7 @@ static void help(void)
            "  '-h' with or without a command shows this help and lists the supported formats\n"
            "  '-p' show progress of command (only certain commands)\n"
            "  '-q' use Quiet mode - do not print any output (except errors)\n"
-           "  '-S' indicates the consecutive number of bytes (defaults to 4k) that must\n"
+           "  '-S' indicates the consecutive number of bytes (defaults to 64k) that must\n"
            "       contain only zeros for qemu-img to create a sparse image during\n"
            "       conversion. If the number of bytes is 0, the source will not be scanned for\n"
            "       unallocated or zero sectors, and the destination image will always be\n"
@@ -1141,7 +1141,7 @@ static int img_convert(int argc, char **argv)
     QEMUOptionParameter *out_baseimg_param;
     char *options = NULL;
     const char *snapshot_name = NULL;
-    int min_sparse = 8; /* Need at least 4k of zeros for sparse detection */
+    int min_sparse = 128; /* Need at least 64k of zeros for sparse detection */
     bool quiet = false;
     Error *local_err = NULL;
 
