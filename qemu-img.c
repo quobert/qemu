@@ -1397,9 +1397,11 @@ static int img_convert(int argc, char **argv)
 
     cluster_sectors = 0;
     ret = bdrv_get_info(out_bs, &bdi);
-    if (ret < 0 && compress) {
-        error_report("could not get block driver info");
-        goto out;
+    if (ret < 0) {
+        if (compress) {
+            error_report("could not get block driver info");
+            goto out;
+        }
     } else {
         cluster_sectors = bdi.cluster_size / BDRV_SECTOR_SIZE;
     }
