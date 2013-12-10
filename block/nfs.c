@@ -102,7 +102,6 @@ static void nfs_co_init_task(nfsclient *client, NFSTask *Task)
 static void nfs_co_generic_cb(int status, struct nfs_context *nfs, void *data, void *private_data)
 {
 	NFSTask *Task = private_data;
-    fprintf(stderr,"nfs_co_generic_cb\n");
     Task->complete = 1;
     Task->status = status;
     Task->data = data;
@@ -123,7 +122,7 @@ static int coroutine_fn nfs_co_readv(BlockDriverState *bs,
     
     nfs_co_init_task(client, &Task);
     Task.iov = iov;
-    fprintf(stderr,"nfs_co_readv %lld %d\n",(long long int) sector_num, nb_sectors);
+//    fprintf(stderr,"nfs_co_readv %lld %d\n",(long long int) sector_num, nb_sectors);
     if (nfs_pread_async(client->context, client->fh, sector_num * BDRV_SECTOR_SIZE,
                         nb_sectors * BDRV_SECTOR_SIZE, nfs_co_generic_cb, &Task) != 0) {
         return -EIO;
@@ -138,7 +137,7 @@ static int coroutine_fn nfs_co_readv(BlockDriverState *bs,
         return -EIO;
     }
     
-    fprintf(stderr,"read %d bytes\n", Task.status);
+//    fprintf(stderr,"read %d bytes\n", Task.status);
 	return 0;
 }
 
@@ -243,7 +242,7 @@ static int nfs_file_open(BlockDriverState *bs, QDict *options, int flags,
 		goto fail;
 	}
 
-	if (nfs_open(client->context, file, O_RDONLY, &client->fh) != 0) {
+	if (nfs_open(client->context, file, (flags & BDRV_O_RDWR) ? O_RDWR : O_RDONLY, &client->fh) != 0) {
 		fprintf(stderr, "Failed to open file : %s\n",
 				        nfs_get_error(client->context));
 		ret = -EINVAL;
