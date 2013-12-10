@@ -250,6 +250,7 @@ vss_win32_sdk=""
 win_sdk="no"
 want_tools="yes"
 libiscsi=""
+libnfs=""
 coroutine=""
 coroutine_pool=""
 seccomp=""
@@ -833,6 +834,10 @@ for opt do
   ;;
   --enable-libiscsi) libiscsi="yes"
   ;;
+  --disable-libnfs) libnfs="no"
+  ;;
+  --enable-libnfs) libnfs="yes"
+  ;;
   --enable-profiler) profiler="yes"
   ;;
   --disable-cocoa) cocoa="no"
@@ -1202,6 +1207,8 @@ echo "  --enable-spice           enable spice"
 echo "  --enable-rbd             enable building the rados block device (rbd)"
 echo "  --disable-libiscsi       disable iscsi support"
 echo "  --enable-libiscsi        enable iscsi support"
+echo "  --disable-libnfs         disable nfs support"
+echo "  --enable-libnfs          enable nfs support"
 echo "  --disable-smartcard-nss  disable smartcard nss support"
 echo "  --enable-smartcard-nss   enable smartcard nss support"
 echo "  --disable-libusb         disable libusb (for usb passthrough)"
@@ -3050,6 +3057,26 @@ EOF
   fi
 fi
 
+##########################################
+# Do we have libnfs
+if test "$libnfs" != "no" ; then
+  cat > $TMPC << EOF
+#include <nfsc/libnfs-zdr.h>
+#include <nfsc/libnfs.h>
+#include <nfsc/libnfs-raw.h>
+#include <nfsc/libnfs-raw-mount.h>
+int main(void) { nfs_init_context(); return 0; }
+EOF
+  if compile_prog "-Werror" "-lnfs" ; then
+    libnfs="yes"
+    LIBS="$LIBS -lnfs"
+  else
+    if test "$libnfs" = "yes" ; then
+      feature_not_found "libnfs"
+    fi
+    libiscsi="no"
+  fi
+fi
 
 ##########################################
 # Do we need libm
@@ -3777,6 +3804,7 @@ echo "libusb            $libusb"
 echo "usb net redir     $usb_redir"
 echo "GLX support       $glx"
 echo "libiscsi support  $libiscsi"
+echo "libnfs support    $libnfs"
 echo "build guest agent $guest_agent"
 echo "QGA VSS support   $guest_agent_with_vss"
 echo "seccomp support   $seccomp"
@@ -4105,6 +4133,10 @@ fi
 
 if test "$libiscsi" = "yes" ; then
   echo "CONFIG_LIBISCSI=y" >> $config_host_mak
+fi
+
+if test "$libnfs" = "yes" ; then
+  echo "CONFIG_LIBNFS=y" >> $config_host_mak
 fi
 
 if test "$seccomp" = "yes"; then
