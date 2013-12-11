@@ -141,16 +141,67 @@ static int coroutine_fn nfs_co_readv(BlockDriverState *bs,
 	return 0;
 }
 
+//return nfs_pwrite_async(nfs, nfsfh, nfsfh->offset, count, buf, cb, private_data);
+
 static int coroutine_fn nfs_co_writev(BlockDriverState *bs,
                                         int64_t sector_num, int nb_sectors,
                                         QEMUIOVector *iov)
 {
-	return -EINVAL;
+    nfsclient *client = bs->opaque;
+    struct NFSTask Task;
+    char *buf = NULL;
+    
+    nfs_co_init_task(client, &Task);
+    
+    buf = g_malloc(nb_sectors * BDRV_SECTOR_SIZE);
+    qemu_iovec_to_buf(iov, 0, buf, nb_sectors * BDRV_SECTOR_SIZE);
+    
+    fprintf(stderr,"nfs_co_writev %lld %d\n",(long long int) sector_num, nb_sectors);
+    
+    if (nfs_pwrite_async(client->context, client->fh, sector_num * BDRV_SECTOR_SIZE,
+                         nb_sectors * BDRV_SECTOR_SIZE, buf, nfs_co_generic_cb, &Task) != 0) {
+        g_free(buf);
+        return -EIO;
+    }
+
+    while (!Task.complete) {
+        nfs_set_events(client);
+        qemu_coroutine_yield();
+    }
+    
+    g_free(buf);
+    
+    if (Task.status != nb_sectors * BDRV_SECTOR_SIZE) {
+        return -EIO;
+    }
+    
+    bs->total_sectors = MAX(bs->total_sectors, sector_num + nb_sectors);
+    fprintf(stderr,"write ok\n");
+	return 0;
 }
 
 static int coroutine_fn nfs_co_flush(BlockDriverState *bs)
 {
-	return -EINVAL;
+	fprintf(stderr,"nfs_file_flush\n");
+    nfsclient *client = bs->opaque;
+    struct NFSTask Task;
+    
+    nfs_co_init_task(client, &Task);
+    
+    if (nfs_fsync_async(client->context, client->fh, nfs_co_generic_cb, &Task) != 0) {
+        return -EIO;
+    }
+
+    while (!Task.complete) {
+        nfs_set_events(client);
+        qemu_coroutine_yield();
+    }
+    
+    if (Task.status != 0) {
+        return -EIO;
+    }
+
+	return 0;
 }
 
 /* TODO Convert to fine grained options */
@@ -171,18 +222,19 @@ static void nfs_file_close(BlockDriverState *bs)
 {
     fprintf(stderr,"nfs_file_close\n");
     nfsclient *client = bs->opaque;
-    if (client->fh) {
-		nfs_close(client->context, client->fh);
-	}
     if (client->context) {
+		if (client->fh) {
+			nfs_close(client->context, client->fh);
+		}
         qemu_aio_set_fd_handler(nfs_get_fd(client->context), NULL, NULL, NULL);
-        nfs_destroy_context(client->context);
+		fprintf(stderr,"nfs_destroy\n");
+		nfs_destroy_context(client->context);
     }
     memset(client, 0, sizeof(nfsclient));
 }
 
-static int nfs_file_open(BlockDriverState *bs, QDict *options, int flags,
-                         Error **errp)
+static int nfs_file_open_common(BlockDriverState *bs, QDict *options, int flags,
+                         int open_flags, Error **errp)
 {
     nfsclient *client = bs->opaque;
     const char *filename;
@@ -202,7 +254,7 @@ static int nfs_file_open(BlockDriverState *bs, QDict *options, int flags,
     }
 
     filename = qemu_opt_get(opts, "filename");
-	fprintf(stderr,"nfs_file_open\n");
+	fprintf(stderr,"nfs_file_open: %s\n",filename);
     
     client->context = nfs_init_context();
 	
@@ -242,11 +294,21 @@ static int nfs_file_open(BlockDriverState *bs, QDict *options, int flags,
 		goto fail;
 	}
 
-	if (nfs_open(client->context, file, (flags & BDRV_O_RDWR) ? O_RDWR : O_RDONLY, &client->fh) != 0) {
-		fprintf(stderr, "Failed to open file : %s\n",
-				        nfs_get_error(client->context));
-		ret = -EINVAL;
-		goto fail;
+    if (open_flags & O_CREAT) {
+		if (nfs_creat(client->context, file, 0600, &client->fh) != 0) {
+			fprintf(stderr, "Failed to create file : %s\n",
+							nfs_get_error(client->context));
+			ret = -EINVAL;
+			goto fail;
+		}
+	} else {
+		open_flags = (flags & BDRV_O_RDWR) ? O_RDWR : O_RDONLY;
+		if (nfs_open(client->context, file, open_flags, &client->fh) != 0) {
+			fprintf(stderr, "Failed to open file : %s\n",
+							nfs_get_error(client->context));
+			ret = -EINVAL;
+			goto fail;
+		}
 	}
 
 	if (nfs_fstat(client->context, client->fh, &st) != 0) {
@@ -270,6 +332,56 @@ out:
     return ret;
 }
 
+static int nfs_file_open(BlockDriverState *bs, QDict *options, int flags,
+                         Error **errp) {
+    return nfs_file_open_common(bs, options, flags, 0, errp);							 
+}
+
+static int nfs_file_create(const char *filename, QEMUOptionParameter *options,
+                         Error **errp)
+{
+    fprintf(stderr,"nfs_file_create: %s\n",filename);
+    int ret = 0;
+    int64_t total_size = 0;
+    BlockDriverState *bs;
+    nfsclient *client = NULL;
+    QDict *bs_options;
+
+    bs = bdrv_new("");
+
+    /* Read out options */
+    while (options && options->name) {
+        if (!strcmp(options->name, "size")) {
+            total_size = options->value.n / BDRV_SECTOR_SIZE;
+        }
+        options++;
+    }
+
+    bs->opaque = g_malloc0(sizeof(struct nfsclient));
+    client = bs->opaque;
+
+    bs_options = qdict_new();
+    qdict_put(bs_options, "filename", qstring_from_str(filename));
+    ret = nfs_file_open_common(bs, bs_options, 0, O_CREAT, NULL);
+    QDECREF(bs_options);
+    if (ret != 0) {
+        goto out;
+    }
+    printf("total_sectors %d total_size %d\n",(int)bs->total_sectors,(int)total_size);
+    ret = nfs_ftruncate(client->context, client->fh, total_size * BDRV_SECTOR_SIZE);
+    if (ret != 0) {
+        ret = -ENOSPC;;
+    }
+
+    ret = 0;
+out:
+    nfs_file_close(bs);
+    g_free(bs->opaque);
+    bs->opaque = NULL;
+    bdrv_unref(bs);
+    return ret;
+}
+
 static BlockDriver bdrv_nfs = {
     .format_name     = "nfs",
     .protocol_name   = "nfs",
@@ -278,6 +390,7 @@ static BlockDriver bdrv_nfs = {
     .bdrv_needs_filename = true,
     .bdrv_file_open  = nfs_file_open,
     .bdrv_close      = nfs_file_close,
+    .bdrv_create     = nfs_file_create,
 
     .bdrv_co_readv         = nfs_co_readv,
     .bdrv_co_writev        = nfs_co_writev,
