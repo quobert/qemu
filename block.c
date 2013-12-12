@@ -742,7 +742,6 @@ static int bdrv_open_common(BlockDriverState *bs, BlockDriverState *file,
     assert(bs->file == NULL);
     assert(options != NULL && bs->options != options);
 
-
     if (file != NULL) {
         filename = file->filename;
         printf("file->drv = %s\n",file->drv->protocol_name);
@@ -750,7 +749,10 @@ static int bdrv_open_common(BlockDriverState *bs, BlockDriverState *file,
         filename = qdict_get_try_str(options, "filename");
     }
 
-printf("bdrv_common_open enter drv = %s, filename = %s\n",drv->format_name,filename);
+        printf("pointers bs = %16lx, bs->opqaue = %16lx\n",(uintptr_t)bs,(uintptr_t)bs->opaque);
+        if (file) {
+			printf("pointers file = %16lx, file->opqaue = %16lx\n",(uintptr_t)file,(uintptr_t)file->opaque);
+		}
 
     trace_bdrv_open_common(bs, filename ?: "", flags, drv->format_name);
 
@@ -814,6 +816,10 @@ printf("bdrv_common_open enter drv = %s, filename = %s\n",drv->format_name,filen
             ret = -EINVAL;
             goto free_and_fail;
         }
+        printf("pointers bs = %16lx, bs->opqaue = %16lx\n",(uintptr_t)bs,(uintptr_t)bs->opaque);
+        if (file) {
+			printf("pointers file = %16lx, file->opqaue = %16lx\n",(uintptr_t)file,(uintptr_t)file->opaque);
+		}
         bs->file = file;
         printf("drv->bdrv_open(..\n");
         ret = drv->bdrv_open(bs, options, open_flags, &local_err);

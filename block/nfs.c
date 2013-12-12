@@ -120,6 +120,9 @@ static int coroutine_fn nfs_co_readv(BlockDriverState *bs,
     nfsclient *client = bs->opaque;
     struct NFSTask Task;
     
+   	printf("nfs_readv pointers bs = %16lx bs->opaque = %16lx client->context = %16lx\n",(uintptr_t)bs,(uintptr_t)bs->opaque,(uintptr_t)client->context);
+
+    
     nfs_co_init_task(client, &Task);
     Task.iov = iov;
 //    fprintf(stderr,"nfs_co_readv %lld %d\n",(long long int) sector_num, nb_sectors);
@@ -257,6 +260,8 @@ static int nfs_file_open_common(BlockDriverState *bs, QDict *options, int flags,
 	fprintf(stderr,"nfs_file_open_common: %s\n",filename);
     
     client->context = nfs_init_context();
+	
+	printf("nfs pointers bs = %16lx bs->opaque = %16lx client->context = %16lx\n",(uintptr_t)bs,(uintptr_t)bs->opaque,(uintptr_t)client->context);
 	
 	if (client->context == NULL) {
 		fprintf(stderr, "failed to init context\n");
