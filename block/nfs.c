@@ -51,7 +51,6 @@ typedef struct nfsclient {
 typedef struct NFSTask {
     int status;
     int complete;
-    void *data;
     QEMUIOVector *iov;
     Coroutine *co;
 } NFSTask;
@@ -63,6 +62,7 @@ static void nfs_set_events(nfsclient *client)
 {
     int ev;
     /* We always register a read handler.  */
+    printf("set events enter\n");
     ev = POLLIN;
     ev |= nfs_which_events(client->context);
     if (ev != client->events) {
@@ -72,23 +72,25 @@ static void nfs_set_events(nfsclient *client)
                       client);
 
     }
-
+    printf("set events done\n");
     client->events = ev;
 }
 
 static void nfs_process_read(void *arg)
 {
     nfsclient *client = arg;
-
-    nfs_service(client->context, POLLIN);
+    printf("nfs_process_read enter service %16lx\n",(uintptr_t) arg);
+    int ret = nfs_service(client->context, POLLIN);
+    printf("nfs_process_read leave service %16lx exit %d\n",(uintptr_t) arg,ret);
     nfs_set_events(client);
 }
 
 static void nfs_process_write(void *arg)
 {
     nfsclient *client = arg;
-
+    printf("nfs_process_write enter service %16lx\n",(uintptr_t) arg);
     nfs_service(client->context, POLLOUT);
+    printf("nfs_process_write leave service %16lx\n",(uintptr_t) arg);
     nfs_set_events(client);
 }
 
@@ -104,8 +106,8 @@ static void nfs_co_generic_cb(int status, struct nfs_context *nfs, void *data, v
 	NFSTask *Task = private_data;
     Task->complete = 1;
     Task->status = status;
-    Task->data = data;
     if (Task->status > 0 && Task->iov) {
+		printf("qemu_iovec_from_buf status len %d\n",(int) status);
 		qemu_iovec_from_buf(Task->iov, 0, data, status);
 	}
     if (Task->co) {
@@ -121,17 +123,17 @@ static int coroutine_fn nfs_co_readv(BlockDriverState *bs,
     struct NFSTask Task;
     
    	printf("nfs_readv pointers bs = %16lx bs->opaque = %16lx client->context = %16lx\n",(uintptr_t)bs,(uintptr_t)bs->opaque,(uintptr_t)client->context);
-
     
     nfs_co_init_task(client, &Task);
     Task.iov = iov;
-//    fprintf(stderr,"nfs_co_readv %lld %d\n",(long long int) sector_num, nb_sectors);
+    fprintf(stderr,"nfs_co_readv %lld %d %d %16lx\n",(long long int) sector_num, nb_sectors, (int) iov->size, (uintptr_t) iov->iov[0].iov_base);
     if (nfs_pread_async(client->context, client->fh, sector_num * BDRV_SECTOR_SIZE,
                         nb_sectors * BDRV_SECTOR_SIZE, nfs_co_generic_cb, &Task) != 0) {
         return -EIO;
     }
 
     while (!Task.complete) {
+		printf("nfs_readv: nfs_set_events\n");
         nfs_set_events(client);
         qemu_coroutine_yield();
     }
@@ -168,6 +170,7 @@ static int coroutine_fn nfs_co_writev(BlockDriverState *bs,
     }
 
     while (!Task.complete) {
+		printf("nfs_writev: set events\n");
         nfs_set_events(client);
         qemu_coroutine_yield();
     }
@@ -196,6 +199,7 @@ static int coroutine_fn nfs_co_flush(BlockDriverState *bs)
     }
 
     while (!Task.complete) {
+		printf("nfs set events\n");
         nfs_set_events(client);
         qemu_coroutine_yield();
     }
@@ -223,16 +227,17 @@ static QemuOptsList runtime_opts = {
 
 static void nfs_file_close(BlockDriverState *bs)
 {
-    fprintf(stderr,"nfs_file_close\n");
     nfsclient *client = bs->opaque;
     if (client->context) {
-        qemu_aio_set_fd_handler(nfs_get_fd(client->context), NULL, NULL, NULL);
+	    fprintf(stderr,"nfs_file_close fd = %d\n",nfs_get_fd(client->context));
 		if (client->fh) {
 			nfs_close(client->context, client->fh);
 		}
 		fprintf(stderr,"nfs_destroy\n");
+		qemu_aio_set_fd_handler(nfs_get_fd(client->context), NULL, NULL, NULL);
 		nfs_destroy_context(client->context);
     }
+    printf("nfs close done!\n");
     memset(client, 0, sizeof(nfsclient));
 }
 
@@ -298,6 +303,8 @@ static int nfs_file_open_common(BlockDriverState *bs, QDict *options, int flags,
 		ret = -EINVAL;
 		goto fail;
 	}
+	
+	printf("mount done\n");
 
     if (open_flags & O_CREAT) {
 		if (nfs_creat(client->context, file, 0600, &client->fh) != 0) {
@@ -321,6 +328,8 @@ static int nfs_file_open_common(BlockDriverState *bs, QDict *options, int flags,
 		ret = -EIO;
 		goto fail;
 	}
+	
+	printf("stat done\n");
 
     bs->total_sectors = st.st_size / BDRV_SECTOR_SIZE;
     client->has_zero_init = S_ISREG(st.st_mode);

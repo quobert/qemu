@@ -1532,8 +1532,10 @@ printf("bdrv_create_after_file open\n");
     }
 
     bdrv_close(bs);
+    
 printf("bdrv_create_after_close\n");
-    memset(bs, 0x00, sizeof(BlockDriverState));
+    bs = bdrv_new("");
+    //memset(bs, 0x00, sizeof(BlockDriverState));
     /*
      * And now open the image and make it consistent first (i.e. increase the
      * refcount of the cluster that is occupied by the header and the refcount

@@ -2466,12 +2466,14 @@ int bdrv_pread(BlockDriverState *bs, int64_t offset,
     int ret;
 
     count = count1;
+    
     /* first read to align to sector start */
     len = (BDRV_SECTOR_SIZE - offset) & (BDRV_SECTOR_SIZE - 1);
     if (len > count)
         len = count;
     sector_num = offset >> BDRV_SECTOR_BITS;
     if (len > 0) {
+		printf("bdrv_pread pre\n");
         if ((ret = bdrv_read(bs, sector_num, tmp_buf, 1)) < 0)
             return ret;
         memcpy(buf, tmp_buf + (offset & (BDRV_SECTOR_SIZE - 1)), len);
@@ -2482,9 +2484,11 @@ int bdrv_pread(BlockDriverState *bs, int64_t offset,
         buf += len;
     }
 
+    
     /* read the sectors "in place" */
     nb_sectors = count >> BDRV_SECTOR_BITS;
     if (nb_sectors > 0) {
+		printf("bdrv_pread sectors\n");
         if ((ret = bdrv_read(bs, sector_num, buf, nb_sectors)) < 0)
             return ret;
         sector_num += nb_sectors;
@@ -2493,12 +2497,16 @@ int bdrv_pread(BlockDriverState *bs, int64_t offset,
         count -= len;
     }
 
+    
     /* add data from the last sector */
     if (count > 0) {
+		printf("bdrv_pread last count = %d\n",count);
         if ((ret = bdrv_read(bs, sector_num, tmp_buf, 1)) < 0)
             return ret;
         memcpy(buf, tmp_buf, count);
     }
+    
+    printf("bdrv_pread finish count1 = %d\n",(int)count1);
     return count1;
 }
 

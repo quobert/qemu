@@ -52,6 +52,10 @@ void aio_set_fd_handler(AioContext *ctx,
 
     node = find_aio_handler(ctx, fd);
 
+    if (node) {
+		printf("find_aio_handler: fd = %d node = %16lx\n", fd, (uintptr_t) node);
+	}
+
     /* Are we deleting the fd handler? */
     if (!io_read && !io_write) {
         if (node) {
@@ -75,9 +79,11 @@ void aio_set_fd_handler(AioContext *ctx,
             /* Alloc and insert if it's not already there */
             node = g_malloc0(sizeof(AioHandler));
             node->pfd.fd = fd;
+            printf("new_aio_handler: fd = %d node = %16lx\n", fd, (uintptr_t) node);
             QLIST_INSERT_HEAD(&ctx->aio_handlers, node, node);
 
             g_source_add_poll(&ctx->source, &node->pfd);
+            
         }
         /* Update handler with latest information */
         node->io_read = io_read;
@@ -141,6 +147,7 @@ static bool aio_dispatch(AioContext *ctx)
         if (!node->deleted &&
             (revents & (G_IO_IN | G_IO_HUP | G_IO_ERR)) &&
             node->io_read) {
+            printf("aio_dispatch_read fd %d node %16lx\n",node->pfd.fd,(uintptr_t) node);
             node->io_read(node->opaque);
 
             /* aio_notify() does not count as progress */

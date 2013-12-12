@@ -509,6 +509,7 @@ void qemu_aio_set_fd_handler(int fd,
                              IOHandler *io_write,
                              void *opaque)
 {
+    printf("qemu_aio_set_fd_handler fd %d io_read %16lx io_write %16lx opaque %16lx\n", fd, (uintptr_t) io_read, (uintptr_t) io_write, (uintptr_t) opaque);
     aio_set_fd_handler(qemu_aio_context, fd, io_read, io_write, opaque);
 }
 #endif
