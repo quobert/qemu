@@ -427,12 +427,14 @@ static int qcow2_open(BlockDriverState *bs, QDict *options, int flags,
     uint64_t l1_vm_state_index;
     const char *opt_overlap_check;
     int overlap_check_template = 0;
-
+    
+    printf("qcow2_open before pread\n");
     ret = bdrv_pread(bs->file, 0, &header, sizeof(header));
     if (ret < 0) {
         error_setg_errno(errp, -ret, "Could not read qcow2 header");
         goto fail;
     }
+    printf("qcow2_open after pread ret = %d\n",ret);
     be32_to_cpus(&header.magic);
     be32_to_cpus(&header.version);
     be64_to_cpus(&header.backing_file_offset);
@@ -1482,13 +1484,13 @@ static int qcow2_create2(const char *filename, int64_t total_size,
         error_propagate(errp, local_err);
         return ret;
     }
-
+printf("bdrv_create_after_create\n");
     ret = bdrv_file_open(&bs, filename, NULL, BDRV_O_RDWR, &local_err);
     if (ret < 0) {
         error_propagate(errp, local_err);
         return ret;
     }
-
+printf("bdrv_create_after_file open\n");
     /* Write the header */
     memset(&header, 0, sizeof(header));
     header.magic = cpu_to_be32(QCOW_MAGIC);
@@ -1530,7 +1532,8 @@ static int qcow2_create2(const char *filename, int64_t total_size,
     }
 
     bdrv_close(bs);
-
+printf("bdrv_create_after_close\n");
+    memset(bs, 0x00, sizeof(BlockDriverState));
     /*
      * And now open the image and make it consistent first (i.e. increase the
      * refcount of the cluster that is occupied by the header and the refcount
@@ -1544,7 +1547,7 @@ static int qcow2_create2(const char *filename, int64_t total_size,
         error_propagate(errp, local_err);
         goto out;
     }
-
+printf("bdrv_create_after_reopne\n");
     ret = qcow2_alloc_clusters(bs, 2 * cluster_size);
     if (ret < 0) {
         error_setg_errno(errp, -ret, "Could not allocate clusters for qcow2 "
@@ -1555,14 +1558,14 @@ static int qcow2_create2(const char *filename, int64_t total_size,
         error_report("Huh, first cluster in empty image is already in use?");
         abort();
     }
-
+printf("bdrv_create_before truncate\n");
     /* Okay, now that we have a valid image, let's give it the right size */
     ret = bdrv_truncate(bs, total_size * BDRV_SECTOR_SIZE);
     if (ret < 0) {
         error_setg_errno(errp, -ret, "Could not resize image");
         goto out;
     }
-
+printf("bdrv_create_before after truncate\n");
     /* Want a backing file? There you go.*/
     if (backing_file) {
         ret = bdrv_change_backing_file(bs, backing_file, backing_format);

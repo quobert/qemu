@@ -742,11 +742,15 @@ static int bdrv_open_common(BlockDriverState *bs, BlockDriverState *file,
     assert(bs->file == NULL);
     assert(options != NULL && bs->options != options);
 
+
     if (file != NULL) {
         filename = file->filename;
+        printf("file->drv = %s\n",file->drv->protocol_name);
     } else {
         filename = qdict_get_try_str(options, "filename");
     }
+
+printf("bdrv_common_open enter drv = %s, filename = %s\n",drv->format_name,filename);
 
     trace_bdrv_open_common(bs, filename ?: "", flags, drv->format_name);
 
@@ -754,6 +758,7 @@ static int bdrv_open_common(BlockDriverState *bs, BlockDriverState *file,
      * opened, so assign it to bs (while file becomes a closed BlockDriverState)
      * and return immediately. */
     if (file != NULL && drv->bdrv_file_open) {
+		printf("bdrv_Swap invoked\n");
         bdrv_swap(file, bs);
         return 0;
     }
@@ -794,11 +799,14 @@ static int bdrv_open_common(BlockDriverState *bs, BlockDriverState *file,
 
     bs->enable_write_cache = !!(flags & BDRV_O_CACHE_WB);
 
+    printf("Open the image, either directly or using a protocol drv=%s\n",drv->protocol_name);
     /* Open the image, either directly or using a protocol */
     if (drv->bdrv_file_open) {
         assert(file == NULL);
         assert(!drv->bdrv_needs_filename || filename != NULL);
+        printf("drv->bdrv_file_open\n");
         ret = drv->bdrv_file_open(bs, options, open_flags, &local_err);
+        printf("drv->bdrv_file_open ret=%d\n",ret);
     } else {
         if (file == NULL) {
             error_setg(errp, "Can't use '%s' as a block driver for the "
@@ -807,8 +815,11 @@ static int bdrv_open_common(BlockDriverState *bs, BlockDriverState *file,
             goto free_and_fail;
         }
         bs->file = file;
+        printf("drv->bdrv_open(..\n");
         ret = drv->bdrv_open(bs, options, open_flags, &local_err);
     }
+
+    printf("Open the image, either directly or using a protocol ret=%d\n",ret);
 
     if (ret < 0) {
         if (error_is_set(&local_err)) {
@@ -1122,8 +1133,10 @@ int bdrv_open(BlockDriverState *bs, const char *filename, QDict *options,
 
     qdict_extract_subqdict(options, &file_options, "file.");
 
+    printf("bdrv_file_open\n");
     ret = bdrv_file_open(&file, filename, file_options,
                          bdrv_open_flags(bs, flags | BDRV_O_UNMAP), &local_err);
+    printf("bdrv_file_open ret = %d\n",ret);
     if (ret < 0) {
         goto fail;
     }
@@ -1147,15 +1160,16 @@ int bdrv_open(BlockDriverState *bs, const char *filename, QDict *options,
     if (!drv) {
         goto unlink_and_fail;
     }
-
+    printf("open the image\n");
     /* Open the image */
     ret = bdrv_open_common(bs, file, options, flags, drv, &local_err);
     if (ret < 0) {
         goto unlink_and_fail;
     }
-
+    printf("open the ok\n");
     if (bs->file != file) {
         bdrv_unref(file);
+        printf("bs->file <> file\n");
         file = NULL;
     }
 

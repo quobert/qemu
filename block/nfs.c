@@ -45,6 +45,7 @@ typedef struct nfsclient {
     struct nfs_context *context;
     struct nfsfh *fh;
     int events;
+    bool has_zero_init;
 } nfsclient;
 
 typedef struct NFSTask {
@@ -61,7 +62,6 @@ static void nfs_process_write(void *arg);
 static void nfs_set_events(nfsclient *client)
 {
     int ev;
-
     /* We always register a read handler.  */
     ev = POLLIN;
     ev |= nfs_which_events(client->context);
@@ -223,10 +223,10 @@ static void nfs_file_close(BlockDriverState *bs)
     fprintf(stderr,"nfs_file_close\n");
     nfsclient *client = bs->opaque;
     if (client->context) {
+        qemu_aio_set_fd_handler(nfs_get_fd(client->context), NULL, NULL, NULL);
 		if (client->fh) {
 			nfs_close(client->context, client->fh);
 		}
-        qemu_aio_set_fd_handler(nfs_get_fd(client->context), NULL, NULL, NULL);
 		fprintf(stderr,"nfs_destroy\n");
 		nfs_destroy_context(client->context);
     }
@@ -254,7 +254,7 @@ static int nfs_file_open_common(BlockDriverState *bs, QDict *options, int flags,
     }
 
     filename = qemu_opt_get(opts, "filename");
-	fprintf(stderr,"nfs_file_open: %s\n",filename);
+	fprintf(stderr,"nfs_file_open_common: %s\n",filename);
     
     client->context = nfs_init_context();
 	
@@ -318,6 +318,9 @@ static int nfs_file_open_common(BlockDriverState *bs, QDict *options, int flags,
 	}
 
     bs->total_sectors = st.st_size / BDRV_SECTOR_SIZE;
+    client->has_zero_init = S_ISREG(st.st_mode);
+ printf("blocksize %d\n",(int) st.st_blksize);
+ printf("blockcnt %d\n",(int) st.st_blocks);
 
     //~ struct nfs_context *nfs = NULL;
     //~ const char *filename;
@@ -329,6 +332,7 @@ out:
     g_free(server);
     g_free(path);
     g_free(file);
+    printf("nfs_file_open_common ret = %d\n",ret);
     return ret;
 }
 
@@ -379,7 +383,14 @@ out:
     g_free(bs->opaque);
     bs->opaque = NULL;
     bdrv_unref(bs);
+    printf("bdrv_create ret = %d\n",ret);
     return ret;
+}
+
+static int nfs_has_zero_init(BlockDriverState *bs)
+{
+    nfsclient *client = bs->opaque;
+    return client->has_zero_init;
 }
 
 static BlockDriver bdrv_nfs = {
@@ -388,6 +399,7 @@ static BlockDriver bdrv_nfs = {
 
     .instance_size   = sizeof(nfsclient),
     .bdrv_needs_filename = true,
+    .bdrv_has_zero_init = nfs_has_zero_init,
     .bdrv_file_open  = nfs_file_open,
     .bdrv_close      = nfs_file_close,
     .bdrv_create     = nfs_file_create,
