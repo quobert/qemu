@@ -185,6 +185,7 @@ typedef struct BDRVQcowState {
 
     uint8_t *cluster_cache;
     uint8_t *cluster_data;
+    int cluster_data_sectors;
     uint64_t cluster_cache_offset;
     QLIST_HEAD(QCowClusterAlloc, QCowL2Meta) cluster_allocs;
 
