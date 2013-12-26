@@ -1321,7 +1321,7 @@ static int decompress_buffer(uint8_t *out_buf, int out_buf_size,
 int qcow2_decompress_cluster(BlockDriverState *bs, uint64_t cluster_offset)
 {
     BDRVQcowState *s = bs->opaque;
-    int ret, csize, nb_csectors, sector_offset;
+    int ret, csize, nb_csectors, sector_offset, max_read;
     uint64_t coffset;
 
     coffset = cluster_offset & s->cluster_offset_mask;
@@ -1329,9 +1329,32 @@ int qcow2_decompress_cluster(BlockDriverState *bs, uint64_t cluster_offset)
         nb_csectors = ((cluster_offset >> s->csize_shift) & s->csize_mask) + 1;
         sector_offset = coffset & 511;
         csize = nb_csectors * 512 - sector_offset;
+        max_read = MIN((bs->file->total_sectors - (coffset >> 9)), 2 * s->cluster_sectors);
         BLKDBG_EVENT(bs->file, BLKDBG_READ_COMPRESSED);
-        ret = bdrv_read(bs->file, coffset >> 9, s->cluster_data, nb_csectors);
+        if (s->cluster_cache_offset != -1 && coffset > s->cluster_cache_offset &&
+           (coffset >> 9) < (s->cluster_cache_offset >> 9) + s->cluster_data_sectors) {
+            int cached_sectors = s->cluster_data_sectors - ((coffset >> 9) -
+                                 (s->cluster_cache_offset >> 9));
+            memmove(s->cluster_data,
+                    s->cluster_data + (s->cluster_data_sectors - cached_sectors) * 512,
+                    cached_sectors * 512);
+            s->cluster_data_sectors = cached_sectors;
+            if (nb_csectors > cached_sectors) {
+                /* some sectors are missing read them and fill up to max_read sectors */
+                ret = bdrv_read(bs->file, (coffset >> 9) + cached_sectors,
+                                s->cluster_data + cached_sectors * 512,
+                                max_read);
+                s->cluster_data_sectors = cached_sectors + max_read;
+            } else {
+                /* all relevant sectors are in the cache */
+                ret = 0;
+            }
+        } else {
+            ret = bdrv_read(bs->file, coffset >> 9, s->cluster_data, max_read);
+            s->cluster_data_sectors = max_read;
+        }
         if (ret < 0) {
+            s->cluster_data_sectors = 0;
             return ret;
         }
         if (decompress_buffer(s->cluster_cache, s->cluster_size,
