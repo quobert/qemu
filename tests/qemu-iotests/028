@@ -45,7 +45,7 @@ trap "_cleanup; exit \$status" 0 1 2 3 15
 # Any format supporting backing files except vmdk and qcow which do not support
 # smaller backing files.
 _supported_fmt qcow2 qed
-_supported_proto file
+_supported_proto generic
 _supported_os Linux
 
 # Choose a size that is not necessarily a cluster size multiple for image
@@ -58,20 +58,19 @@ base_size=$(( image_size - 1024 * 1024 * 1024 ))
 
 offset=$(( base_size - 32 * 1024 ))
 
-_make_test_img $base_size
+TEST_IMG=$TEST_IMG.base _make_test_img $base_size
 
 echo "Filling base image"
 echo
 
 # Fill end of base image with a pattern, skipping every other sector
-io writev $offset 512 1024 32
+TEST_IMG=$TEST_IMG.base io writev $offset 512 1024 32
 
-_check_test_img
+TEST_IMG=$TEST_IMG.base _check_test_img
 
 echo "Creating test image with backing file"
 echo
 
-mv "$TEST_IMG" "$TEST_IMG.base"
 _make_test_img -b "$TEST_IMG.base" $image_size
 
 echo "Filling test image"
