@@ -41,14 +41,14 @@ trap "_cleanup; exit \$status" 0 1 2 3 15
 
 # much of this could be generic for any format supporting compression.
 _supported_fmt qcow qcow2
-_supported_proto file
+_supported_proto generic
 _supported_os Linux
 
 TEST_OFFSETS="0 4294967296"
 TEST_OPS="writev read write readv"
 CLUSTER_SIZE=4096
 
-_make_test_img 6G
+TEST_IMG=$TEST_IMG.orig _make_test_img 6G
 
 echo "Testing empty image"
 echo
@@ -56,16 +56,15 @@ echo
 for offset in $TEST_OFFSETS; do
     echo "At offset $offset:"
     for op in $TEST_OPS; do
-        io_test $op $offset $CLUSTER_SIZE 8
+        TEST_IMG=$TEST_IMG.orig io_test $op $offset $CLUSTER_SIZE 8
     done
-    _check_test_img
+    TEST_IMG=$TEST_IMG.orig _check_test_img
 done
 
 
 echo "Compressing image"
 echo
 
-mv "$TEST_IMG" "$TEST_IMG.orig"
 $QEMU_IMG convert -f $IMGFMT -O $IMGFMT -c "$TEST_IMG.orig" "$TEST_IMG"
 
 echo "Testing compressed image"
