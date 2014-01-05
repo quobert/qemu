@@ -111,13 +111,12 @@ function io_test2() {
 
     # Write the clusters to be compressed
     echo === Clusters to be compressed [1]
-    io_pattern writev $((offset + 4 * $cluster_size)) $cluster_size $((9 * $cluster_size)) $num 165
+    TEST_IMG=$TEST_IMG.orig io_pattern writev $((offset + 4 * $cluster_size)) $cluster_size $((9 * $cluster_size)) $num 165
     echo === Clusters to be compressed [2]
-    io_pattern writev $((offset + 5 * $cluster_size)) $cluster_size $((9 * $cluster_size)) $num 165
+    TEST_IMG=$TEST_IMG.orig io_pattern writev $((offset + 5 * $cluster_size)) $cluster_size $((9 * $cluster_size)) $num 165
     echo === Clusters to be compressed [3]
-    io_pattern writev $((offset + 8 * $cluster_size)) $cluster_size $((9 * $cluster_size)) $num 165
+    TEST_IMG=$TEST_IMG.orig io_pattern writev $((offset + 8 * $cluster_size)) $cluster_size $((9 * $cluster_size)) $num 165
 
-    mv "$TEST_IMG" "$TEST_IMG.orig"
     $QEMU_IMG convert -f $IMGFMT -O $IMGFMT -c "$TEST_IMG.orig" "$TEST_IMG"
 
     # Write the used clusters
