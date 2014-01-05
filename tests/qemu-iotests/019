@@ -32,9 +32,11 @@ status=1	# failure is the default!
 
 _cleanup()
 {
-	_cleanup_test_img
-    rm -f "$TEST_IMG.base"
-    rm -f "$TEST_IMG.orig"
+    _cleanup_test_img
+    if [ "$IMGPROTO" = "file" ]; then
+        rm -f "$TEST_IMG.base"
+        rm -f "$TEST_IMG.orig"
+    fi
 }
 trap "_cleanup; exit \$status" 0 1 2 3 15
 
@@ -45,46 +47,42 @@ trap "_cleanup; exit \$status" 0 1 2 3 15
 
 # Any format supporting backing files
 _supported_fmt qcow qcow2 vmdk qed
-_supported_proto file
+_supported_proto generic
 _supported_os Linux
 
 TEST_OFFSETS="0 4294967296"
 CLUSTER_SIZE=65536
 
-_make_test_img 6G
+TEST_IMG=$TEST_IMG.base _make_test_img 6G
 
 echo "Filling base image"
 echo
 
 for offset in $TEST_OFFSETS; do
     # Some clusters with alternating backing file/image file reads
-    io_pattern writev $(( offset )) 512 1024 64 42
+    TEST_IMG=$TEST_IMG.base io_pattern writev $(( offset )) 512 1024 64 42
 
     # Complete backing clusters
-    io_pattern writev $(( offset  + 1024 * 1024))  $CLUSTER_SIZE $CLUSTER_SIZE 1 42
+    TEST_IMG=$TEST_IMG.base io_pattern writev $(( offset  + 1024 * 1024))  $CLUSTER_SIZE $CLUSTER_SIZE 1 42
 done
-_check_test_img
+TEST_IMG=$TEST_IMG.base _check_test_img
 
 echo "Creating test image with backing file"
 echo
 
-mv "$TEST_IMG" "$TEST_IMG.base"
-_make_test_img -b "$TEST_IMG.base" 6G
+TEST_IMG=$TEST_IMG.orig _make_test_img -b "$TEST_IMG.base" 6G
 
 echo "Filling test image"
 echo
 
 for offset in $TEST_OFFSETS; do
     # Some clusters with alternating backing file/image file reads
-    io_pattern writev $(( offset + 512 )) 512 1024 64 43
+    TEST_IMG=$TEST_IMG.orig io_pattern writev $(( offset + 512 )) 512 1024 64 43
 
     # Complete test image clusters
-    io_pattern writev $(( offset + 1024 * 1024 + $CLUSTER_SIZE))  $CLUSTER_SIZE $CLUSTER_SIZE 1 43
+    TEST_IMG=$TEST_IMG.orig io_pattern writev $(( offset + 1024 * 1024 + $CLUSTER_SIZE))  $CLUSTER_SIZE $CLUSTER_SIZE 1 43
 done
-_check_test_img
-
-mv "$TEST_IMG" "$TEST_IMG.orig"
-
+TEST_IMG=$TEST_IMG.orig _check_test_img
 
 
 # Test the conversion twice: One test with the old-style -B option and another
