@@ -28,10 +28,16 @@ here=`pwd`
 tmp=/tmp/$$
 status=1	# failure is the default!
 
+BLKDEBUG_CONFIGDIR=`pwd`/scratch
+if [ ! -e "$BLKDEBUG_CONFIGDIR" ]; then
+        mkdir "BLKDEBUG_CONFIGDIR"
+fi
+BLKDBG_CONFIGFILE=$BLKDEBUG_CONFIGDIR/blkdebug.conf
+
 _cleanup()
 {
-	_cleanup_test_img
-    rm "$TEST_DIR/blkdebug.conf"
+    _cleanup_test_img
+    rm "$BLKDBG_CONFIGFILE"
 }
 trap "_cleanup; exit \$status" 0 1 2 3 15
 
@@ -42,7 +48,7 @@ trap "_cleanup; exit \$status" 0 1 2 3 15
 
 # Currently only qcow2 supports rebasing
 _supported_fmt qcow2
-_supported_proto file
+_supported_proto generic
 _supported_os Linux
 _default_cache_mode "writethrough"
 _supported_cache_modes "writethrough" "none"
@@ -52,7 +58,7 @@ echo
 
 CLUSTER_SIZE=1024
 
-BLKDBG_TEST_IMG="blkdebug:$TEST_DIR/blkdebug.conf:$TEST_IMG"
+BLKDBG_TEST_IMG="blkdebug:$BLKDBG_CONFIGFILE:$TEST_IMG"
 
 for event in \
     l1_update \
@@ -76,7 +82,7 @@ for imm in off; do
 for once in on off; do
 for vmstate in "" "-b"; do
 
-cat > "$TEST_DIR/blkdebug.conf" <<EOF
+cat > "$BLKDBG_CONFIGFILE" <<EOF
 [inject-error]
 event = "$event"
 errno = "$errno"
@@ -134,7 +140,7 @@ for imm in off; do
 for once in on off; do
 for vmstate in "" "-b"; do
 
-cat > "$TEST_DIR/blkdebug.conf" <<EOF
+cat > "$BLKDBG_CONFIGFILE" <<EOF
 [inject-error]
 event = "$event"
 errno = "$errno"
@@ -173,7 +179,7 @@ for errno in 5 28; do
 for imm in off; do
 for once in on off; do
 
-cat > "$TEST_DIR/blkdebug.conf" <<EOF
+cat > "$BLKDBG_CONFIGFILE" <<EOF
 [inject-error]
 event = "$event"
 errno = "$errno"
