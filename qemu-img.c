@@ -1264,7 +1264,8 @@ static int img_convert(int argc, char **argv)
 
     total_sectors = 0;
     for (bs_i = 0; bs_i < bs_n; bs_i++) {
-        bs[bs_i] = bdrv_new_open(argv[optind + bs_i], fmt, BDRV_O_FLAGS, true,
+        bs[bs_i] = bdrv_new_open(argv[optind + bs_i], fmt,
+                                 BDRV_O_FLAGS | BDRV_O_SEQUENTIAL, true,
                                  quiet);
         if (!bs[bs_i]) {
             error_report("Could not open '%s'", argv[optind + bs_i]);
