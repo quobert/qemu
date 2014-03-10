@@ -116,7 +116,7 @@ nfs_co_generic_cb(int status, struct nfs_context *nfs, void *data,
     if (task->status == 0 && task->st) {
         memcpy(task->st, data, sizeof(struct stat));
     }
-    if (task->ret < 0) {
+    if (task->status < 0) {
         error_report("NFS Error: %s", nfs_get_error(nfs));
     }
     if (task->co) {
