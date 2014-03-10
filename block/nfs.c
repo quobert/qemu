@@ -169,8 +169,12 @@ static int coroutine_fn nfs_co_writev(BlockDriverState *bs,
 
     nfs_co_init_task(client, &task);
 
-    buf = g_malloc(nb_sectors * BDRV_SECTOR_SIZE);
-    qemu_iovec_to_buf(iov, 0, buf, nb_sectors * BDRV_SECTOR_SIZE);
+    if (iov->niov == 1) {
+        buf = iov->iov[0].iov_base;
+    } else {
+        buf = g_malloc(nb_sectors * BDRV_SECTOR_SIZE);
+        qemu_iovec_to_buf(iov, 0, buf, nb_sectors * BDRV_SECTOR_SIZE);
+    }
 
     if (nfs_pwrite_async(client->context, client->fh,
                          sector_num * BDRV_SECTOR_SIZE,
@@ -185,7 +189,9 @@ static int coroutine_fn nfs_co_writev(BlockDriverState *bs,
         qemu_coroutine_yield();
     }
 
-    g_free(buf);
+    if (iov->niov != 1) {
+        g_free(buf);
+    }
 
     if (task.status != nb_sectors * BDRV_SECTOR_SIZE) {
         return task.status < 0 ? task.status : -EIO;
