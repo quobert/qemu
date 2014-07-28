@@ -2914,6 +2914,10 @@ static void vnc_listen_read(void *opaque, bool websocket)
     }
 
     if (csock != -1) {
+#ifdef TCP_NODELAY
+        int flag = 1;
+        setsockopt(csock, IPPROTO_TCP, TCP_NODELAY, (char *) &flag, sizeof(int));
+#endif
         vnc_connect(vs, csock, false, websocket);
     }
 }
