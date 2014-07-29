@@ -480,6 +480,13 @@ static int raw_open_common(BlockDriverState *bs, QDict *options,
 
     raw_attach_aio_context(bs, bdrv_get_aio_context(bs));
 
+#ifdef POSIX_FADV_SEQUENTIAL
+    if (bs->open_flags & BDRV_O_SEQUENTIAL &&
+        !(bs->open_flags & BDRV_O_NOCACHE)) {
+        posix_fadvise(s->fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+    }
+#endif
+
     ret = 0;
 fail:
     if (filename && (bdrv_flags & BDRV_O_TEMPORARY)) {
@@ -967,6 +974,13 @@ static int aio_worker(void *arg)
             ret = aiocb->aio_nbytes;
         }
         if (ret == aiocb->aio_nbytes) {
+#ifdef POSIX_FADV_DONTNEED
+            if (aiocb->bs->open_flags & BDRV_O_SEQUENTIAL &&
+                !(aiocb->bs->open_flags & BDRV_O_NOCACHE)) {
+                posix_fadvise(aiocb->aio_fildes, aiocb->aio_offset,
+                              aiocb->aio_nbytes, POSIX_FADV_DONTNEED);
+            }
+#endif
             ret = 0;
         } else if (ret >= 0 && ret < aiocb->aio_nbytes) {
             ret = -EINVAL;
