@@ -138,6 +138,8 @@ static void QEMU_NORETURN help(void)
            "  '--output' takes the format in which the output must be done (human or json)\n"
            "  '-n' skips the target volume creation (useful if the volume is created\n"
            "       prior to running qemu-img)\n"
+           "  '-N' opens the source file(s) for sequential reading and drops data from\n"
+           "       page cache immediately\n"
            "\n"
            "Parameters to check subcommand:\n"
            "  '-r' tries to repair any inconsistencies that are found during the check.\n"
@@ -1193,7 +1195,7 @@ static int img_convert(int argc, char **argv)
     char *options = NULL;
     const char *snapshot_name = NULL;
     int min_sparse = 8; /* Need at least 4k of zeros for sparse detection */
-    bool quiet = false;
+    bool quiet = false, sequential_read = false;
     Error *local_err = NULL;
     QemuOpts *sn_opts = NULL;
 
@@ -1204,7 +1206,7 @@ static int img_convert(int argc, char **argv)
     compress = 0;
     skip_create = 0;
     for(;;) {
-        c = getopt(argc, argv, "f:O:B:s:hce6o:pS:t:qnl:");
+        c = getopt(argc, argv, "f:O:B:s:hce6o:pS:t:qnNl:");
         if (c == -1) {
             break;
         }
@@ -1291,6 +1293,9 @@ static int img_convert(int argc, char **argv)
         case 'n':
             skip_create = 1;
             break;
+        case 'N':
+            sequential_read = true;
+            break;
         }
     }
 
@@ -1327,9 +1332,13 @@ static int img_convert(int argc, char **argv)
 
     total_sectors = 0;
     for (bs_i = 0; bs_i < bs_n; bs_i++) {
+        int open_flags = BDRV_O_FLAGS;
         char *id = bs_n > 1 ? g_strdup_printf("source %d", bs_i)
                             : g_strdup("source");
-        bs[bs_i] = bdrv_new_open(id, argv[optind + bs_i], fmt, BDRV_O_FLAGS,
+        if (sequential_read) {
+            open_flags |= BDRV_O_SEQUENTIAL;
+        }
+        bs[bs_i] = bdrv_new_open(id, argv[optind + bs_i], fmt, open_flags,
                                  true, quiet);
         g_free(id);
         if (!bs[bs_i]) {
