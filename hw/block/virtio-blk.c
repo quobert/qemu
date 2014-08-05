@@ -51,12 +51,13 @@ static void virtio_blk_complete_request(VirtIOBlockReq *req,
 {
     VirtIOBlock *s = req->dev;
     VirtIODevice *vdev = VIRTIO_DEVICE(s);
+    unsigned qid = req->qid;
 
     trace_virtio_blk_req_complete(req, status);
 
     stb_p(&req->in->status, status);
-    virtqueue_push(s->vq, &req->elem, req->qiov.size + sizeof(*req->in));
-    virtio_notify(vdev, s->vq);
+    virtqueue_push(s->vqs[qid], &req->elem, req->qiov.size + sizeof(*req->in));
+    virtio_notify(vdev, s->vqs[qid]);
 }
 
 static void virtio_blk_req_complete(VirtIOBlockReq *req, unsigned char status)
@@ -126,11 +127,12 @@ static void virtio_blk_flush_complete(void *opaque, int ret)
     virtio_blk_free_request(req);
 }
 
-static VirtIOBlockReq *virtio_blk_get_request(VirtIOBlock *s)
+static VirtIOBlockReq *virtio_blk_get_request(VirtIOBlock *s, unsigned qid)
 {
     VirtIOBlockReq *req = virtio_blk_alloc_request(s);
 
-    if (!virtqueue_pop(s->vq, &req->elem)) {
+    req->qid = qid;
+    if (!virtqueue_pop(s->vqs[qid], &req->elem)) {
         virtio_blk_free_request(req);
         return NULL;
     }
@@ -490,6 +492,7 @@ static void virtio_blk_handle_output(VirtIODevice *vdev, VirtQueue *vq)
     VirtIOBlock *s = VIRTIO_BLK(vdev);
     VirtIOBlockReq *req;
     MultiReqBuffer mrb = {};
+    unsigned qid = virtio_get_queue_index(vq);
 
     /* Some guests kick before setting VIRTIO_CONFIG_S_DRIVER_OK so start
      * dataplane here instead of waiting for .set_status().
@@ -499,7 +502,7 @@ static void virtio_blk_handle_output(VirtIODevice *vdev, VirtQueue *vq)
         return;
     }
 
-    while ((req = virtio_blk_get_request(s))) {
+    while ((req = virtio_blk_get_request(s, qid))) {
         virtio_blk_handle_request(req, &mrb);
     }
 
@@ -603,6 +606,7 @@ static void virtio_blk_update_config(VirtIODevice *vdev, uint8_t *config)
     blkcfg.physical_block_exp = get_physical_block_exp(conf);
     blkcfg.alignment_offset = 0;
     blkcfg.wce = blk_enable_write_cache(s->blk);
+    stw_p(&blkcfg.num_queues, s->conf.num_queues);
     memcpy(config, &blkcfg, sizeof(struct virtio_blk_config));
 }
 
@@ -636,6 +640,10 @@ static uint32_t virtio_blk_get_features(VirtIODevice *vdev, uint32_t features)
     }
     if (blk_is_read_only(s->blk)) {
         features |= 1 << VIRTIO_BLK_F_RO;
+    }
+
+    if (s->conf.num_queues > 1) {
+        features |= 1 << VIRTIO_BLK_F_MQ;
     }
 
     return features;
@@ -781,6 +789,7 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
     VirtIOBlock *s = VIRTIO_BLK(dev);
     VirtIOBlkConf *conf = &s->conf;
     Error *err = NULL;
+    int i;
     static int virtio_blk_id;
 
     if (!conf->conf.blk) {
@@ -807,7 +816,9 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
     s->rq = NULL;
     s->sector_mask = (s->conf.conf.logical_block_size / BDRV_SECTOR_SIZE) - 1;
 
-    s->vq = virtio_add_queue(vdev, 128, virtio_blk_handle_output);
+    s->vqs = g_malloc0(sizeof(VirtQueue *) * conf->num_queues);
+    for (i = 0; i < conf->num_queues; i++)
+        s->vqs[i] = virtio_add_queue(vdev, 128, virtio_blk_handle_output);
     s->complete_request = virtio_blk_complete_request;
     virtio_blk_data_plane_create(vdev, conf, &s->dataplane, &err);
     if (err != NULL) {
@@ -838,6 +849,7 @@ static void virtio_blk_device_unrealize(DeviceState *dev, Error **errp)
     qemu_del_vm_change_state_handler(s->change);
     unregister_savevm(dev, "virtio-blk", s);
     blockdev_mark_auto_del(s->blk);
+    g_free(s->vqs);
     virtio_cleanup(vdev);
 }
 
@@ -845,6 +857,7 @@ static void virtio_blk_instance_init(Object *obj)
 {
     VirtIOBlock *s = VIRTIO_BLK(obj);
 
+    s->conf.num_queues = 1;    /* num of queue has to be at least 1 */
     object_property_add_link(obj, "iothread", TYPE_IOTHREAD,
                              (Object **)&s->conf.iothread,
                              qdev_prop_allow_set_link_before_realize,

@@ -121,6 +121,7 @@ struct VirtIOBlkConf
     uint32_t scsi;
     uint32_t config_wce;
     uint32_t data_plane;
+    uint32_t num_queues;
 };
 
 struct VirtIOBlockDataPlane;
@@ -129,7 +130,7 @@ struct VirtIOBlockReq;
 typedef struct VirtIOBlock {
     VirtIODevice parent_obj;
     BlockBackend *blk;
-    VirtQueue *vq;
+    VirtQueue **vqs;
     void *rq;
     QEMUBH *bh;
     VirtIOBlkConf conf;
@@ -152,6 +153,7 @@ typedef struct VirtIOBlockReq {
     BlockAcctCookie acct;
     QEMUIOVector mr_qiov;
     struct VirtIOBlockReq *mr_next;
+    unsigned qid;
 } VirtIOBlockReq;
 
 #define VIRTIO_BLK_MAX_MERGE_REQS 32
