@@ -2789,6 +2789,180 @@ out:
     return 0;
 }
 
+typedef struct BenchData {
+    BlockDriverState *bs;
+    int bufsize;
+    int nrreq;
+    int n;
+    uint8_t *buf;
+    QEMUIOVector *qiov;
+
+    int in_flight;
+    uint64_t sector;
+} BenchData;
+
+static void bench_cb(void *opaque, int ret)
+{
+    BenchData *b = opaque;
+    BlockDriverAIOCB *acb;
+
+    if (ret < 0) {
+        error_report("Failed request: %s\n", strerror(-ret));
+        exit(EXIT_FAILURE);
+    }
+    if (b->in_flight > 0) {
+        b->n--;
+        b->in_flight--;
+    }
+
+    while (b->n > b->in_flight && b->in_flight < b->nrreq) {
+        acb = bdrv_aio_readv(b->bs, b->sector, b->qiov,
+                             b->bufsize >> BDRV_SECTOR_BITS,
+                             bench_cb, b);
+        if (!acb) {
+            error_report("Failed to issue request");
+            exit(EXIT_FAILURE);
+        }
+        b->in_flight++;
+        b->sector += b->bufsize;
+        b->sector %= b->bs->total_sectors;
+    }
+}
+
+static int img_bench(int argc, char **argv)
+{
+    int c, ret = 0;
+    const char *fmt = NULL, *filename;
+    bool quiet = false;
+    int count = 75000;
+    int depth = 64;
+    size_t bufsize = 4096;
+    BlockDriverState *bs = NULL;
+    int flags = BDRV_O_FLAGS;
+    struct timeval t1, t2;
+    int i;
+
+    for (;;) {
+        c = getopt(argc, argv, "hc:d:f:nqs:t:");
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+        case '?':
+            help();
+            break;
+        case 'c':
+        {
+            char *end;
+            errno = 0;
+            count = strtoul(optarg, &end, 0);
+            if (errno || *end || count > INT_MAX) {
+                error_report("Invalid request count specified");
+                return 1;
+            }
+            break;
+        }
+        case 'd':
+        {
+            char *end;
+            errno = 0;
+            depth = strtoul(optarg, &end, 0);
+            if (errno || *end || depth > INT_MAX) {
+                error_report("Invalid request count specified");
+                return 1;
+            }
+            break;
+        }
+        case 'f':
+            fmt = optarg;
+            break;
+        case 'n':
+            flags |= BDRV_O_NATIVE_AIO;
+            break;
+        case 'q':
+            quiet = true;
+            break;
+        case 's':
+        {
+            int64_t sval;
+            char *end;
+
+            sval = strtosz_suffix(optarg, &end, STRTOSZ_DEFSUFFIX_B);
+            if (sval < 0 || sval > INT_MAX || *end) {
+                error_report("Invalid buffer size specified");
+                return 1;
+            }
+
+            bufsize = sval;
+            break;
+        }
+        case 't':
+            ret = bdrv_parse_cache_flags(optarg, &flags);
+            if (ret < 0) {
+                error_report("Invalid cache mode");
+                ret = -1;
+                goto out;
+            }
+            break;
+        }
+    }
+
+    if (optind != argc - 1) {
+        error_exit("Expecting one image file name");
+    }
+    filename = argv[argc - 1];
+
+    bs = bdrv_new_open("image", filename, fmt, flags, true, quiet);
+    if (!bs) {
+        error_report("Could not open image '%s'", filename);
+        ret = -1;
+        goto out;
+    }
+
+    BenchData data = {
+        .bs = bs,
+        .bufsize = bufsize,
+        .nrreq = depth,
+        .n = count,
+    };
+    printf("Sending %d requests, %d bytes each, %d in parallel\n",
+        data.n, data.bufsize, data.nrreq);
+
+    data.buf = qemu_blockalign(bs, data.nrreq * data.bufsize);
+    data.qiov = g_new(QEMUIOVector, data.nrreq);
+    for (i = 0; i < data.nrreq; i++) {
+        qemu_iovec_init(&data.qiov[i], 1);
+        qemu_iovec_add(&data.qiov[i],
+                       data.buf + i * data.bufsize, data.bufsize);
+    }
+
+    gettimeofday(&t1, NULL);
+    bench_cb(&data, 0);
+
+    while (data.n > 0) {
+        main_loop_wait(false);
+    }
+    gettimeofday(&t2, NULL);
+
+    printf("Run completed in %3.3f seconds.\n",
+           (t2.tv_sec - t1.tv_sec)
+           + ((double)(t2.tv_usec - t1.tv_usec) / 1000000));
+
+out:
+    qemu_vfree(data.buf);
+    if (bs) {
+        bdrv_unref(bs);
+    }
+
+    if (ret) {
+        return 1;
+    }
+    return 0;
+}
+
+
 static const img_cmd_t img_cmds[] = {
 #define DEF(option, callback, arg_string)        \
     { option, callback },
