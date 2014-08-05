@@ -41,6 +41,12 @@
 #define VIRTIO_BLK_F_TOPOLOGY   10      /* Topology information is available */
 #define VIRTIO_BLK_F_CONFIG_WCE 11      /* write cache configurable */
 
+/*
+ * support multi vqs, and virtio_blk_config.num_queues is only
+ * available when this feature is enabled
+ */
+#define VIRTIO_BLK_F_MQ		12
+
 #define VIRTIO_BLK_ID_BYTES     20      /* ID string length */
 
 struct virtio_blk_config
@@ -57,6 +63,8 @@ struct virtio_blk_config
     uint16_t min_io_size;
     uint32_t opt_io_size;
     uint8_t wce;
+    uint8_t unused;
+    uint16_t num_queues;	/* must be at the end */
 } QEMU_PACKED;
 
 /* These two define direction. */
