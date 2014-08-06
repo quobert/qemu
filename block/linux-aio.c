@@ -12,6 +12,7 @@
 #include "qemu/queue.h"
 #include "block/raw-aio.h"
 #include "qemu/event_notifier.h"
+#include "block/coroutine.h"
 
 #include <libaio.h>
 
@@ -28,7 +29,7 @@
 #define MAX_QUEUED_IO  128
 
 struct qemu_laiocb {
-    BlockAIOCB common;
+    Coroutine *co;
     struct qemu_laio_state *ctx;
     struct iocb iocb;
     ssize_t ret;
@@ -88,9 +89,9 @@ static void qemu_laio_process_completion(struct qemu_laio_state *s,
             }
         }
     }
-    laiocb->common.cb(laiocb->common.opaque, ret);
 
-    qemu_aio_unref(laiocb);
+    laiocb->ret = ret;
+    qemu_coroutine_enter(laiocb->co, NULL);
 }
 
 /* The completion BH fetches completed I/O requests and invokes their
@@ -151,30 +152,6 @@ static void qemu_laio_completion_cb(EventNotifier *e)
         qemu_bh_schedule(s->completion_bh);
     }
 }
-
-static void laio_cancel(BlockAIOCB *blockacb)
-{
-    struct qemu_laiocb *laiocb = (struct qemu_laiocb *)blockacb;
-    struct io_event event;
-    int ret;
-
-    if (laiocb->ret != -EINPROGRESS) {
-        return;
-    }
-    ret = io_cancel(laiocb->ctx->ctx, &laiocb->iocb, &event);
-    laiocb->ret = -ECANCELED;
-    if (ret != 0) {
-        /* iocb is not cancelled, cb will be called by the event loop later */
-        return;
-    }
-
-    laiocb->common.cb(laiocb->common.opaque, laiocb->ret);
-}
-
-static const AIOCBInfo laio_aiocb_info = {
-    .aiocb_size         = sizeof(struct qemu_laiocb),
-    .cancel_async       = laio_cancel,
-};
 
 static void ioq_init(LaioQueue *io_q)
 {
@@ -237,23 +214,20 @@ void laio_io_unplug(BlockDriverState *bs, void *aio_ctx, bool unplug)
     }
 }
 
-BlockAIOCB *laio_submit(BlockDriverState *bs, void *aio_ctx, int fd,
-        int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
-        BlockCompletionFunc *cb, void *opaque, int type)
+int laio_submit_co(BlockDriverState *bs, void *aio_ctx, int fd,
+        int64_t sector_num, QEMUIOVector *qiov, int nb_sectors, int type)
 {
     struct qemu_laio_state *s = aio_ctx;
-    struct qemu_laiocb *laiocb;
-    struct iocb *iocbs;
     off_t offset = sector_num * 512;
 
-    laiocb = qemu_aio_get(&laio_aiocb_info, bs, cb, opaque);
-    laiocb->nbytes = nb_sectors * 512;
-    laiocb->ctx = s;
-    laiocb->ret = -EINPROGRESS;
-    laiocb->is_read = (type == QEMU_AIO_READ);
-    laiocb->qiov = qiov;
-
-    iocbs = &laiocb->iocb;
+    struct qemu_laiocb laiocb = {
+        .co = qemu_coroutine_self(),
+        .nbytes = nb_sectors * 512,
+        .ctx = s,
+        .is_read = (type == QEMU_AIO_READ),
+        .qiov = qiov,
+    };
+    struct iocb *iocbs = &laiocb.iocb;
 
     switch (type) {
     case QEMU_AIO_WRITE:
@@ -266,21 +240,19 @@ BlockAIOCB *laio_submit(BlockDriverState *bs, void *aio_ctx, int fd,
     default:
         fprintf(stderr, "%s: invalid AIO request type 0x%x.\n",
                         __func__, type);
-        goto out_free_aiocb;
+        return -EIO;
     }
-    io_set_eventfd(&laiocb->iocb, event_notifier_get_fd(&s->e));
+    io_set_eventfd(&laiocb.iocb, event_notifier_get_fd(&s->e));
 
-    QSIMPLEQ_INSERT_TAIL(&s->io_q.pending, laiocb, next);
+    QSIMPLEQ_INSERT_TAIL(&s->io_q.pending, &laiocb, next);
     s->io_q.n++;
     if (!s->io_q.blocked &&
         (!s->io_q.plugged || s->io_q.n >= MAX_QUEUED_IO)) {
         ioq_submit(s);
     }
-    return &laiocb->common;
 
-out_free_aiocb:
-    qemu_aio_unref(laiocb);
-    return NULL;
+    qemu_coroutine_yield();
+    return laiocb.ret;
 }
 
 void laio_detach_aio_context(void *s_, AioContext *old_context)
