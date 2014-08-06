@@ -976,7 +976,7 @@ static ssize_t handle_aiocb_discard(RawPosixAIOData *aiocb)
     return ret;
 }
 
-static int aio_worker(void *arg)
+static int aio_co_worker(void *arg)
 {
     RawPosixAIOData *aiocb = arg;
     ssize_t ret = 0;
@@ -1022,6 +1022,13 @@ static int aio_worker(void *arg)
         break;
     }
 
+    return ret;
+}
+
+static int aio_worker(void *arg)
+{
+    RawPosixAIOData *aiocb = arg;
+    int ret = aio_co_worker(arg);
     g_slice_free(RawPosixAIOData, aiocb);
     return ret;
 }
@@ -1030,25 +1037,25 @@ static int paio_submit_co(BlockDriverState *bs, int fd,
         int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
         int type)
 {
-    RawPosixAIOData *acb = g_slice_new(RawPosixAIOData);
     ThreadPool *pool;
+    RawPosixAIOData acb = {
+        .bs = bs,
+        .aio_type = type,
+        .aio_fildes = fd,
 
-    acb->bs = bs;
-    acb->aio_type = type;
-    acb->aio_fildes = fd;
-
-    acb->aio_nbytes = nb_sectors * BDRV_SECTOR_SIZE;
-    acb->aio_offset = sector_num * BDRV_SECTOR_SIZE;
+        .aio_nbytes = nb_sectors * BDRV_SECTOR_SIZE,
+        .aio_offset = sector_num * BDRV_SECTOR_SIZE,
+    };
 
     if (qiov) {
-        acb->aio_iov = qiov->iov;
-        acb->aio_niov = qiov->niov;
-        assert(qiov->size == acb->aio_nbytes);
+        acb.aio_iov = qiov->iov;
+        acb.aio_niov = qiov->niov;
+        assert(qiov->size == acb.aio_nbytes);
     }
 
     trace_paio_submit_co(sector_num, nb_sectors, type);
     pool = aio_get_thread_pool(bdrv_get_aio_context(bs));
-    return thread_pool_submit_co(pool, aio_worker, acb);
+    return thread_pool_submit_co(pool, aio_co_worker, &acb);
 }
 
 static BlockAIOCB *paio_submit(BlockDriverState *bs, int fd,
