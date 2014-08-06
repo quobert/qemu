@@ -12,6 +12,7 @@
 #include "qemu/queue.h"
 #include "block/raw-aio.h"
 #include "qemu/event_notifier.h"
+#include "block/coroutine.h"
 
 #include <libaio.h>
 
@@ -28,7 +29,7 @@
 #define MAX_QUEUED_IO  128
 
 struct qemu_laiocb {
-    BlockDriverAIOCB common;
+    Coroutine *co;
     struct qemu_laio_state *ctx;
     struct iocb iocb;
     ssize_t ret;
@@ -52,6 +53,8 @@ struct qemu_laio_state {
     /* io queue for submit at batch */
     LaioQueue io_q;
 };
+
+static void laio_submit_co_cb(void *opaque, int ret);
 
 static inline ssize_t io_event_ret(struct io_event *ev)
 {
@@ -80,10 +83,8 @@ static void qemu_laio_process_completion(struct qemu_laio_state *s,
             }
         }
 
-        laiocb->common.cb(laiocb->common.opaque, ret);
+        laio_submit_co_cb(laiocb, ret);
     }
-
-    qemu_aio_release(laiocb);
 }
 
 static void qemu_laio_completion_cb(EventNotifier *e)
@@ -109,43 +110,6 @@ static void qemu_laio_completion_cb(EventNotifier *e)
         }
     }
 }
-
-static void laio_cancel(BlockDriverAIOCB *blockacb)
-{
-    struct qemu_laiocb *laiocb = (struct qemu_laiocb *)blockacb;
-    struct io_event event;
-    int ret;
-
-    if (laiocb->ret != -EINPROGRESS)
-        return;
-
-    /*
-     * Note that as of Linux 2.6.31 neither the block device code nor any
-     * filesystem implements cancellation of AIO request.
-     * Thus the polling loop below is the normal code path.
-     */
-    ret = io_cancel(laiocb->ctx->ctx, &laiocb->iocb, &event);
-    if (ret == 0) {
-        laiocb->ret = -ECANCELED;
-        return;
-    }
-
-    /*
-     * We have to wait for the iocb to finish.
-     *
-     * The only way to get the iocb status update is by polling the io context.
-     * We might be able to do this slightly more optimal by removing the
-     * O_NONBLOCK flag.
-     */
-    while (laiocb->ret == -EINPROGRESS) {
-        qemu_laio_completion_cb(&laiocb->ctx->e);
-    }
-}
-
-static const AIOCBInfo laio_aiocb_info = {
-    .aiocb_size         = sizeof(struct qemu_laiocb),
-    .cancel             = laio_cancel,
-};
 
 static void ioq_init(LaioQueue *io_q)
 {
@@ -220,23 +184,27 @@ int laio_io_unplug(BlockDriverState *bs, void *aio_ctx, bool unplug)
     return ret;
 }
 
-BlockDriverAIOCB *laio_submit(BlockDriverState *bs, void *aio_ctx, int fd,
-        int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
-        BlockDriverCompletionFunc *cb, void *opaque, int type)
+static void laio_submit_co_cb(void *opaque, int ret)
+{
+    struct qemu_laiocb *laiocb = opaque;
+    laiocb->ret = ret;
+    qemu_coroutine_enter(laiocb->co, NULL);
+}
+
+int laio_submit_co(BlockDriverState *bs, void *aio_ctx, int fd,
+        int64_t sector_num, QEMUIOVector *qiov, int nb_sectors, int type)
 {
     struct qemu_laio_state *s = aio_ctx;
-    struct qemu_laiocb *laiocb;
-    struct iocb *iocbs;
     off_t offset = sector_num * 512;
 
-    laiocb = qemu_aio_get(&laio_aiocb_info, bs, cb, opaque);
-    laiocb->nbytes = nb_sectors * 512;
-    laiocb->ctx = s;
-    laiocb->ret = -EINPROGRESS;
-    laiocb->is_read = (type == QEMU_AIO_READ);
-    laiocb->qiov = qiov;
-
-    iocbs = &laiocb->iocb;
+    struct qemu_laiocb laiocb = {
+        .co = qemu_coroutine_self(),
+        .nbytes = nb_sectors * 512,
+        .ctx = s,
+        .is_read = (type == QEMU_AIO_READ),
+        .qiov = qiov,
+    };
+    struct iocb *iocbs = &laiocb.iocb;
 
     switch (type) {
     case QEMU_AIO_WRITE:
@@ -249,22 +217,20 @@ BlockDriverAIOCB *laio_submit(BlockDriverState *bs, void *aio_ctx, int fd,
     default:
         fprintf(stderr, "%s: invalid AIO request type 0x%x.\n",
                         __func__, type);
-        goto out_free_aiocb;
+        return -EIO;
     }
-    io_set_eventfd(&laiocb->iocb, event_notifier_get_fd(&s->e));
+    io_set_eventfd(&laiocb.iocb, event_notifier_get_fd(&s->e));
 
     if (!s->io_q.plugged) {
         if (io_submit(s->ctx, 1, &iocbs) < 0) {
-            goto out_free_aiocb;
+            return -EIO;
         }
     } else {
         ioq_enqueue(s, iocbs);
     }
-    return &laiocb->common;
 
-out_free_aiocb:
-    qemu_aio_release(laiocb);
-    return NULL;
+    qemu_coroutine_yield();
+    return laiocb.ret;
 }
 
 void laio_detach_aio_context(void *s_, AioContext *old_context)

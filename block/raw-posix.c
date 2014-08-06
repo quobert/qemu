@@ -1052,14 +1052,13 @@ static BlockDriverAIOCB *paio_submit(BlockDriverState *bs, int fd,
     return thread_pool_submit_aio(pool, aio_worker, acb, cb, opaque);
 }
 
-static BlockDriverAIOCB *raw_aio_submit(BlockDriverState *bs,
-        int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
-        BlockDriverCompletionFunc *cb, void *opaque, int type)
+static int coroutine_fn raw_co_rw(BlockDriverState *bs, int64_t sector_num,
+                                  int nb_sectors, QEMUIOVector *qiov, int type)
 {
     BDRVRawState *s = bs->opaque;
 
     if (fd_open(bs) < 0)
-        return NULL;
+        return -EIO;
 
     /*
      * If O_DIRECT is used the buffer needs to be aligned on a sector
@@ -1071,14 +1070,25 @@ static BlockDriverAIOCB *raw_aio_submit(BlockDriverState *bs,
             type |= QEMU_AIO_MISALIGNED;
 #ifdef CONFIG_LINUX_AIO
         } else if (s->use_aio) {
-            return laio_submit(bs, s->aio_ctx, s->fd, sector_num, qiov,
-                               nb_sectors, cb, opaque, type);
+            return laio_submit_co(bs, s->aio_ctx, s->fd, sector_num, qiov,
+                               nb_sectors, type);
 #endif
         }
     }
 
-    return paio_submit(bs, s->fd, sector_num, qiov, nb_sectors,
-                       cb, opaque, type);
+    return paio_submit_co(bs, s->fd, sector_num, qiov, nb_sectors, type);
+}
+
+static int coroutine_fn raw_co_readv(BlockDriverState *bs, int64_t sector_num,
+                                     int nb_sectors, QEMUIOVector *qiov)
+{
+    return raw_co_rw(bs, sector_num, nb_sectors, qiov, QEMU_AIO_READ);
+}
+
+static int coroutine_fn raw_co_writev(BlockDriverState *bs, int64_t sector_num,
+                                      int nb_sectors, QEMUIOVector *qiov)
+{
+    return raw_co_rw(bs, sector_num, nb_sectors, qiov, QEMU_AIO_WRITE);
 }
 
 static void raw_aio_plug(BlockDriverState *bs)
@@ -1109,22 +1119,6 @@ static void raw_aio_flush_io_queue(BlockDriverState *bs)
         laio_io_unplug(bs, s->aio_ctx, false);
     }
 #endif
-}
-
-static BlockDriverAIOCB *raw_aio_readv(BlockDriverState *bs,
-        int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
-        BlockDriverCompletionFunc *cb, void *opaque)
-{
-    return raw_aio_submit(bs, sector_num, qiov, nb_sectors,
-                          cb, opaque, QEMU_AIO_READ);
-}
-
-static BlockDriverAIOCB *raw_aio_writev(BlockDriverState *bs,
-        int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
-        BlockDriverCompletionFunc *cb, void *opaque)
-{
-    return raw_aio_submit(bs, sector_num, qiov, nb_sectors,
-                          cb, opaque, QEMU_AIO_WRITE);
 }
 
 static BlockDriverAIOCB *raw_aio_flush(BlockDriverState *bs,
@@ -1593,8 +1587,8 @@ static BlockDriver bdrv_file = {
     .bdrv_co_get_block_status = raw_co_get_block_status,
     .bdrv_co_write_zeroes = raw_co_write_zeroes,
 
-    .bdrv_aio_readv = raw_aio_readv,
-    .bdrv_aio_writev = raw_aio_writev,
+    .bdrv_co_readv          = raw_co_readv,
+    .bdrv_co_writev         = raw_co_writev,
     .bdrv_aio_flush = raw_aio_flush,
     .bdrv_aio_discard = raw_aio_discard,
     .bdrv_refresh_limits = raw_refresh_limits,
@@ -1995,8 +1989,8 @@ static BlockDriver bdrv_host_device = {
     .create_opts         = &raw_create_opts,
     .bdrv_co_write_zeroes = hdev_co_write_zeroes,
 
-    .bdrv_aio_readv	= raw_aio_readv,
-    .bdrv_aio_writev	= raw_aio_writev,
+    .bdrv_co_readv          = raw_co_readv,
+    .bdrv_co_writev         = raw_co_writev,
     .bdrv_aio_flush	= raw_aio_flush,
     .bdrv_aio_discard   = hdev_aio_discard,
     .bdrv_refresh_limits = raw_refresh_limits,
@@ -2144,8 +2138,8 @@ static BlockDriver bdrv_host_floppy = {
     .bdrv_create         = hdev_create,
     .create_opts         = &raw_create_opts,
 
-    .bdrv_aio_readv     = raw_aio_readv,
-    .bdrv_aio_writev    = raw_aio_writev,
+    .bdrv_co_readv          = raw_co_readv,
+    .bdrv_co_writev         = raw_co_writev,
     .bdrv_aio_flush	= raw_aio_flush,
     .bdrv_refresh_limits = raw_refresh_limits,
     .bdrv_io_plug = raw_aio_plug,
@@ -2275,8 +2269,8 @@ static BlockDriver bdrv_host_cdrom = {
     .bdrv_create         = hdev_create,
     .create_opts         = &raw_create_opts,
 
-    .bdrv_aio_readv     = raw_aio_readv,
-    .bdrv_aio_writev    = raw_aio_writev,
+    .bdrv_co_readv          = raw_co_readv,
+    .bdrv_co_writev         = raw_co_writev,
     .bdrv_aio_flush	= raw_aio_flush,
     .bdrv_refresh_limits = raw_refresh_limits,
     .bdrv_io_plug = raw_aio_plug,
@@ -2412,8 +2406,8 @@ static BlockDriver bdrv_host_cdrom = {
     .bdrv_create        = hdev_create,
     .create_opts        = &raw_create_opts,
 
-    .bdrv_aio_readv     = raw_aio_readv,
-    .bdrv_aio_writev    = raw_aio_writev,
+    .bdrv_co_readv          = raw_co_readv,
+    .bdrv_co_writev         = raw_co_writev,
     .bdrv_aio_flush	= raw_aio_flush,
     .bdrv_refresh_limits = raw_refresh_limits,
     .bdrv_io_plug = raw_aio_plug,
