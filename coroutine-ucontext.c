@@ -56,7 +56,7 @@ typedef struct {
     CoroutineUContext leader;
 } CoroutineThreadState;
 
-static pthread_key_t thread_state_key;
+//static pthread_key_t thread_state_key;
 
 /*
  * va_args to makecontext() must be type 'int', so passing
@@ -68,6 +68,9 @@ union cc_arg {
     int i[2];
 };
 
+static __thread CoroutineThreadState the_state;
+
+#if 0
 static CoroutineThreadState *coroutine_get_thread_state(void)
 {
     CoroutineThreadState *s = pthread_getspecific(thread_state_key);
@@ -97,6 +100,7 @@ static void __attribute__((constructor)) coroutine_init(void)
         abort();
     }
 }
+#endif
 
 static void coroutine_trampoline(int i0, int i1)
 {
@@ -198,7 +202,8 @@ CoroutineAction qemu_coroutine_switch(Coroutine *from_, Coroutine *to_,
 {
     CoroutineUContext *from = DO_UPCAST(CoroutineUContext, base, from_);
     CoroutineUContext *to = DO_UPCAST(CoroutineUContext, base, to_);
-    CoroutineThreadState *s = coroutine_get_thread_state();
+    //CoroutineThreadState *s = coroutine_get_thread_state();
+    CoroutineThreadState *s = &the_state;
     int ret;
 
     s->current = to_;
@@ -212,14 +217,20 @@ CoroutineAction qemu_coroutine_switch(Coroutine *from_, Coroutine *to_,
 
 Coroutine *qemu_coroutine_self(void)
 {
-    CoroutineThreadState *s = coroutine_get_thread_state();
+    //CoroutineThreadState *s = coroutine_get_thread_state();
+    CoroutineThreadState *s = &the_state;
+
+    if (!s->current) {
+        s->current = &s->leader.base;
+    }
 
     return s->current;
 }
 
 bool qemu_in_coroutine(void)
 {
-    CoroutineThreadState *s = pthread_getspecific(thread_state_key);
+    //CoroutineThreadState *s = pthread_getspecific(thread_state_key);
+    CoroutineThreadState *s = &the_state;
 
-    return s && s->current->caller;
+    return s->current && s->current->caller;
 }
