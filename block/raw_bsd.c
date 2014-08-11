@@ -48,6 +48,22 @@ static int raw_reopen_prepare(BDRVReopenState *reopen_state,
     return 0;
 }
 
+static BlockAIOCB *raw_aio_readv(BlockDriverState *bs, int64_t sector_num,
+                                     QEMUIOVector *qiov, int nb_sectors,
+                                    BlockCompletionFunc *cb, void *opaque)
+{
+    BLKDBG_EVENT(bs->file, BLKDBG_READ_AIO);
+    return bdrv_aio_readv(bs->file, sector_num, qiov, nb_sectors, cb, opaque);
+}
+
+static BlockAIOCB *raw_aio_writev(BlockDriverState *bs, int64_t sector_num,
+                                      QEMUIOVector *qiov, int nb_sectors,
+                                     BlockCompletionFunc *cb, void *opaque)
+{
+    BLKDBG_EVENT(bs->file, BLKDBG_WRITE_AIO);
+    return bdrv_aio_writev(bs->file, sector_num, qiov, nb_sectors, cb, opaque);
+}
+
 static int coroutine_fn raw_co_readv(BlockDriverState *bs, int64_t sector_num,
                                      int nb_sectors, QEMUIOVector *qiov)
 {
@@ -242,6 +258,8 @@ BlockDriver bdrv_raw = {
     .bdrv_open            = &raw_open,
     .bdrv_close           = &raw_close,
     .bdrv_create          = &raw_create,
+    .bdrv_aio_readv       = &raw_aio_readv,
+    .bdrv_aio_writev      = &raw_aio_writev,
     .bdrv_co_readv        = &raw_co_readv,
     .bdrv_co_writev       = &raw_co_writev,
     .bdrv_co_write_zeroes = &raw_co_write_zeroes,

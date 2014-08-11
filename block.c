@@ -725,7 +725,7 @@ static int refresh_total_sectors(BlockDriverState *bs, int64_t hint)
         return 0;
 
     /* query actual device if possible, otherwise just trust the hint */
-    if (drv->bdrv_getlength) {
+    if (!hint && drv->bdrv_getlength) {
         int64_t length = drv->bdrv_getlength(bs);
         if (length < 0) {
             return length;
@@ -2629,9 +2629,6 @@ static int bdrv_check_byte_request(BlockDriverState *bs, int64_t offset,
     if (!bdrv_is_inserted(bs))
         return -ENOMEDIUM;
 
-    if (bs->growable)
-        return 0;
-
     len = bdrv_getlength(bs);
 
     if (offset < 0)
@@ -3087,7 +3084,7 @@ static int coroutine_fn bdrv_co_do_preadv(BlockDriverState *bs,
     if (!drv) {
         return -ENOMEDIUM;
     }
-    if (bdrv_check_byte_request(bs, offset, bytes)) {
+    if (!bs->growable && bdrv_check_byte_request(bs, offset, bytes)) {
         return -EIO;
     }
 
@@ -3331,7 +3328,7 @@ static int coroutine_fn bdrv_co_do_pwritev(BlockDriverState *bs,
     if (bs->read_only) {
         return -EACCES;
     }
-    if (bdrv_check_byte_request(bs, offset, bytes)) {
+    if (!bs->growable && bdrv_check_byte_request(bs, offset, bytes)) {
         return -EIO;
     }
 
@@ -4384,6 +4381,20 @@ BlockAIOCB *bdrv_aio_readv(BlockDriverState *bs, int64_t sector_num,
 {
     trace_bdrv_aio_readv(bs, sector_num, nb_sectors, opaque);
 
+    if (bs->drv && bs->drv->bdrv_aio_readv &&
+        bs->drv->bdrv_aio_readv != bdrv_aio_readv_em &&
+        nb_sectors >= 0 && nb_sectors <= (UINT_MAX >> BDRV_SECTOR_BITS) &&
+        !bdrv_check_byte_request(bs, sector_num << BDRV_SECTOR_BITS,
+                                 nb_sectors << BDRV_SECTOR_BITS) &&
+        !bs->copy_on_read && !bs->io_limits_enabled &&
+        bs->request_alignment <= BDRV_SECTOR_SIZE) {
+        BlockAIOCB *acb =
+            bs->drv->bdrv_aio_readv(bs, sector_num, qiov, nb_sectors,
+                                    cb, opaque);
+        assert(acb);
+        return acb;
+    }
+
     return bdrv_co_aio_rw_vector(bs, sector_num, qiov, nb_sectors, 0,
                                  cb, opaque, false);
 }
@@ -4393,6 +4404,24 @@ BlockAIOCB *bdrv_aio_writev(BlockDriverState *bs, int64_t sector_num,
                             BlockCompletionFunc *cb, void *opaque)
 {
     trace_bdrv_aio_writev(bs, sector_num, nb_sectors, opaque);
+
+    if (bs->drv && bs->drv->bdrv_aio_writev &&
+        bs->drv->bdrv_aio_writev != bdrv_aio_writev_em &&
+        nb_sectors >= 0 && nb_sectors <= (UINT_MAX >> BDRV_SECTOR_BITS) &&
+        !bdrv_check_byte_request(bs, sector_num << BDRV_SECTOR_BITS,
+                                 nb_sectors << BDRV_SECTOR_BITS) &&
+        !bs->read_only && !bs->io_limits_enabled &&
+        bs->request_alignment <= BDRV_SECTOR_SIZE &&
+        bs->enable_write_cache &&
+        QLIST_EMPTY(&bs->before_write_notifiers.notifiers) &&
+        bs->stats.wr_highest_sector >= sector_num + nb_sectors - 1 &&
+        QLIST_EMPTY(&bs->dirty_bitmaps)) {
+        BlockAIOCB *acb =
+            bs->drv->bdrv_aio_writev(bs, sector_num, qiov, nb_sectors,
+                                     cb, opaque);
+        assert(acb);
+        return acb;
+    }
 
     return bdrv_co_aio_rw_vector(bs, sector_num, qiov, nb_sectors, 0,
                                  cb, opaque, true);
