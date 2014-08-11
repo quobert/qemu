@@ -341,6 +341,7 @@ static void virtio_blk_handle_write(VirtIOBlockReq *req, MultiReqBuffer *mrb)
     mrb->num_writes++;
 }
 
+#if 0
 static void virtio_blk_handle_read(VirtIOBlockReq *req)
 {
     uint64_t sector;
@@ -361,6 +362,35 @@ static void virtio_blk_handle_read(VirtIOBlockReq *req)
                   req->qiov.size / BDRV_SECTOR_SIZE,
                   virtio_blk_rw_complete, req);
 }
+#else
+static void virtio_blk_co_handle_read(void *opaque)
+{
+    VirtIOBlockReq *req = opaque;
+    uint64_t sector;
+    int ret;
+
+    sector = virtio_ldq_p(VIRTIO_DEVICE(req->dev), &req->out.sector);
+
+    trace_virtio_blk_handle_read(req, sector, req->qiov.size / 512);
+
+    if (!virtio_blk_sect_range_ok(req->dev, sector, req->qiov.size)) {
+        virtio_blk_req_complete(req, VIRTIO_BLK_S_IOERR);
+        virtio_blk_free_request(req);
+        return;
+    }
+
+    bdrv_acct_start(req->dev->bs, &req->acct, req->qiov.size, BDRV_ACCT_READ);
+    ret = bdrv_co_readv(req->dev->bs, sector,
+                   req->qiov.size / BDRV_SECTOR_SIZE, &req->qiov);
+    virtio_blk_rw_complete(req, ret);
+}
+
+static inline void virtio_blk_handle_read(VirtIOBlockReq *req)
+{
+    Coroutine *co = qemu_coroutine_create(virtio_blk_co_handle_read);
+    qemu_coroutine_enter(co, req);
+}
+#endif
 
 void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb)
 {
