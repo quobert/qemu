@@ -34,6 +34,7 @@
 #include "qemu/timer.h"
 #include "qemu/config-file.h"
 #include "qemu/error-report.h"
+#include "qapi/qmp/qerror.h"
 #include "exec/memory.h"
 #include "sysemu/dma.h"
 #include "exec/address-spaces.h"
@@ -1095,6 +1096,9 @@ static void *file_ram_alloc(RAMBlock *block,
 
 error:
     if (mem_prealloc) {
+        if (*errp) {
+            qerror_report_err(*errp);
+        }
         exit(1);
     }
     return NULL;
