@@ -3148,6 +3148,16 @@ static int coroutine_fn bdrv_co_do_readv(BlockDriverState *bs,
         return -EINVAL;
     }
 
+    if (bs->drv && bs->drv->bdrv_co_readv &&
+        bs->drv->bdrv_co_readv != bdrv_co_readv_em &&
+        nb_sectors >= 0 && nb_sectors <= (UINT_MAX >> BDRV_SECTOR_BITS) &&
+        !bdrv_check_byte_request(bs, sector_num << BDRV_SECTOR_BITS,
+                                 nb_sectors << BDRV_SECTOR_BITS) &&
+        !bs->copy_on_read && !bs->io_limits_enabled &&
+        bs->request_alignment <= BDRV_SECTOR_SIZE) {
+        return bs->drv->bdrv_co_readv(bs, sector_num, nb_sectors, qiov);
+    }
+
     return bdrv_co_do_preadv(bs, sector_num << BDRV_SECTOR_BITS,
                              nb_sectors << BDRV_SECTOR_BITS, qiov, flags);
 }
