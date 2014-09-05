@@ -3185,6 +3185,13 @@ static int coroutine_fn bdrv_co_do_readv(BlockDriverState *bs,
         return -EINVAL;
     }
 
+    if (bs->bl.max_transfer_length && nb_sectors > bs->bl.max_transfer_length) {
+        error_report("read of %d sectors at sector %ld exceeds device max"
+                     " transfer length of %d sectors.", nb_sectors, sector_num,
+                     bs->bl.max_transfer_length);
+        return -EINVAL;
+    }
+
     return bdrv_co_do_preadv(bs, sector_num << BDRV_SECTOR_BITS,
                              nb_sectors << BDRV_SECTOR_BITS, qiov, flags);
 }
@@ -3469,6 +3476,13 @@ static int coroutine_fn bdrv_co_do_writev(BlockDriverState *bs,
     BdrvRequestFlags flags)
 {
     if (nb_sectors < 0 || nb_sectors > (INT_MAX >> BDRV_SECTOR_BITS)) {
+        return -EINVAL;
+    }
+
+    if (bs->bl.max_transfer_length && nb_sectors > bs->bl.max_transfer_length) {
+        error_report("write of %d sectors at sector %ld exceeds device max"
+                     " transfer length of %d sectors.", nb_sectors, sector_num,
+                     bs->bl.max_transfer_length);
         return -EINVAL;
     }
 
