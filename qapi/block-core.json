@@ -214,6 +214,8 @@
 #
 # @detect_zeroes: detect and optimize zero writes (Since 2.1)
 #
+# @write_merging: true if write merging is enabled (Since 2.2)
+#
 # @bps: total throughput limit in bytes per second is specified
 #
 # @bps_rd: read throughput limit in bytes per second is specified
@@ -250,6 +252,7 @@
             '*backing_file': 'str', 'backing_file_depth': 'int',
             'encrypted': 'bool', 'encryption_key_missing': 'bool',
             'detect_zeroes': 'BlockdevDetectZeroesOptions',
+            'write_merging': 'bool',
             'bps': 'int', 'bps_rd': 'int', 'bps_wr': 'int',
             'iops': 'int', 'iops_rd': 'int', 'iops_wr': 'int',
             'image': 'ImageInfo',
@@ -1185,6 +1188,10 @@
 #                 (default: false)
 # @detect-zeroes: #optional detect and optimize zero writes (Since 2.1)
 #                 (default: off)
+# @write-merging: #optional enable the merging of write requests
+#                 also known as multiwrite_merge (Since 2.2)
+#                 (default: true, but this might change in the future
+#                 depending on format/protocol/features used)
 #
 # Since: 1.7
 ##
@@ -1198,7 +1205,8 @@
             '*rerror': 'BlockdevOnError',
             '*werror': 'BlockdevOnError',
             '*read-only': 'bool',
-            '*detect-zeroes': 'BlockdevDetectZeroesOptions' } }
+            '*detect-zeroes': 'BlockdevDetectZeroesOptions',
+            '*write-merging': 'bool' } }
 
 ##
 # @BlockdevOptionsFile

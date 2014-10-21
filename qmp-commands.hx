@@ -2104,6 +2104,7 @@ Each json-object contain the following:
          - "iops_size": I/O size when limiting by iops (json-int)
          - "detect_zeroes": detect and optimize zero writing (json-string)
              - Possible values: "off", "on", "unmap"
+         - "write_merging": enable merging of write requests (json-bool)
          - "image": the detail of the image, it is a json-object containing
             the following:
              - "filename": image file name (json-string)
@@ -2181,6 +2182,7 @@ Example:
                "iops_wr_max": 0,
                "iops_size": 0,
                "detect_zeroes": "on",
+               "write_merging": "true",
                "image":{
                   "filename":"disks/test.qcow2",
                   "format":"qcow2",

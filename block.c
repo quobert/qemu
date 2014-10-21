@@ -884,6 +884,10 @@ static QemuOptsList bdrv_runtime_opts = {
             .name = "node-name",
             .type = QEMU_OPT_STRING,
             .help = "Node name of the block device node",
+        },{
+            .name = "write-merging",
+            .type = QEMU_OPT_BOOL,
+            .help = "enable write merging (default: true)",
         },
         { /* end of list */ }
     },
@@ -986,6 +990,7 @@ static int bdrv_open_common(BlockDriverState *bs, BlockDriverState *file,
     bs->opaque = g_malloc0(drv->instance_size);
 
     bs->enable_write_cache = !!(flags & BDRV_O_CACHE_WB);
+    bs->write_merging = qemu_opt_get_bool(opts, "write-merging", true);
 
     /* Open the image, either directly or using a protocol */
     if (drv->bdrv_file_open) {
@@ -4450,6 +4455,10 @@ static int multiwrite_merge(BlockDriverState *bs, BlockRequest *reqs,
     int num_reqs, MultiwriteCB *mcb)
 {
     int i, outidx;
+
+    if (!bs->write_merging) {
+        return num_reqs;
+    }
 
     // Sort requests by start sector
     qsort(reqs, num_reqs, sizeof(*reqs), &multiwrite_req_compare);

@@ -348,6 +348,10 @@ void hmp_info_block(Monitor *mon, const QDict *qdict)
                            BlockdevDetectZeroesOptions_lookup[info->value->inserted->detect_zeroes]);
         }
 
+        if (!info->value->inserted->write_merging) {
+            monitor_printf(mon, "    Write Merging:    off\n");
+        }
+
         if (info->value->inserted->bps
             || info->value->inserted->bps_rd
             || info->value->inserted->bps_wr

@@ -402,6 +402,7 @@ struct BlockDriverState {
 
     QDict *options;
     BlockdevDetectZeroesOptions detect_zeroes;
+    bool write_merging;
 
     /* The error object in use for blocking operations on backing_hd */
     Error *backing_blocker;

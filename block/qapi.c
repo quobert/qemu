@@ -59,6 +59,7 @@ BlockDeviceInfo *bdrv_block_device_info(BlockDriverState *bs)
 
     info->backing_file_depth = bdrv_get_backing_file_depth(bs);
     info->detect_zeroes = bs->detect_zeroes;
+    info->write_merging = bs->write_merging;
 
     if (bs->io_limits_enabled) {
         ThrottleConfig cfg;
