@@ -308,6 +308,8 @@ static bool virtio_blk_sect_range_ok(VirtIOBlock *dev,
     return true;
 }
 
+#define MAX_MERGE_REQS 32
+
 static void virtio_blk_handle_write(VirtIOBlockReq *req, MultiReqBuffer *mrb)
 {
     BlockRequest *blkreq;
@@ -326,7 +328,7 @@ static void virtio_blk_handle_write(VirtIOBlockReq *req, MultiReqBuffer *mrb)
     block_acct_start(blk_get_stats(req->dev->blk), &req->acct, req->qiov.size,
                      BLOCK_ACCT_WRITE);
 
-    if (mrb->num_writes == 32) {
+    if (mrb->num_writes == MAX_MERGE_REQS) {
         virtio_submit_multiwrite(req->dev->blk, mrb);
     }
 
