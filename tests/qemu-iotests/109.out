@@ -1,0 +1,68 @@
+QA output created by 109
+Formatting 'TEST_DIR/t.IMGFMT', fmt=IMGFMT size=134217728 
+
+=== write-merging not specified ===
+
+Testing: -drive file=TEST_DIR/t.raw,format=raw,if=virtio,file.node-name=file
+QMP_VERSION
+{"return": {}}
+{"return": [{"io-status": "ok", "device": "virtio0", "locked": false, "removable": false, "inserted": {"iops_rd": 0, "detect_zeroes": "off", "write_merging": true, "image": {"virtual-size": 134217728, "filename": "TEST_DIR/t.raw", "format": "raw", "actual-size": 0, "dirty-flag": false}, "iops_wr": 0, "ro": false, "backing_file_depth": 0, "drv": "raw", "iops": 0, "bps_wr": 0, "encrypted": false, "bps": 0, "bps_rd": 0, "file": "TEST_DIR/t.raw", "encryption_key_missing": false}, "type": "unknown"}, {"io-status": "ok", "device": "ide1-cd0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}, {"device": "floppy0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}, {"device": "sd0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}]}
+{"return": [{"iops_rd": 0, "detect_zeroes": "off", "write_merging": true, "image": {}, "iops_wr": 0, "ro": false, "node-name": "file", "backing_file_depth": 0, "drv": "file", "iops": 0, "bps_wr": 0, "encrypted": false, "bps": 0, "bps_rd": 0, "file": "TEST_DIR/t.raw", "encryption_key_missing": false}]}
+{"return": {}}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN"}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "DEVICE_TRAY_MOVED", "data": {"device": "ide1-cd0", "tray-open": true}}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "DEVICE_TRAY_MOVED", "data": {"device": "floppy0", "tray-open": true}}
+
+
+=== write-merging set to on ===
+
+Testing: -drive file=TEST_DIR/t.raw,format=raw,if=virtio,file.node-name=file,write-merging=on
+QMP_VERSION
+{"return": {}}
+{"return": [{"io-status": "ok", "device": "virtio0", "locked": false, "removable": false, "inserted": {"iops_rd": 0, "detect_zeroes": "off", "write_merging": true, "image": {"virtual-size": 134217728, "filename": "json:{\"write-merging\": \"on\", \"driver\": \"raw\", \"file\": {\"driver\": \"file\", \"filename\": \"TEST_DIR/t.raw\"}}", "format": "raw", "actual-size": 0, "dirty-flag": false}, "iops_wr": 0, "ro": false, "backing_file_depth": 0, "drv": "raw", "iops": 0, "bps_wr": 0, "encrypted": false, "bps": 0, "bps_rd": 0, "file": "json:{\"write-merging\": \"on\", \"driver\": \"raw\", \"file\": {\"driver\": \"file\", \"filename\": \"TEST_DIR/t.raw\"}}", "encryption_key_missing": false}, "type": "unknown"}, {"io-status": "ok", "device": "ide1-cd0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}, {"device": "floppy0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}, {"device": "sd0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}]}
+{"return": [{"iops_rd": 0, "detect_zeroes": "off", "write_merging": true, "image": {}, "iops_wr": 0, "ro": false, "node-name": "file", "backing_file_depth": 0, "drv": "file", "iops": 0, "bps_wr": 0, "encrypted": false, "bps": 0, "bps_rd": 0, "file": "TEST_DIR/t.raw", "encryption_key_missing": false}]}
+{"return": {}}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN"}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "DEVICE_TRAY_MOVED", "data": {"device": "ide1-cd0", "tray-open": true}}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "DEVICE_TRAY_MOVED", "data": {"device": "floppy0", "tray-open": true}}
+
+
+=== write-merging set to off ===
+
+Testing: -drive file=TEST_DIR/t.raw,format=raw,if=virtio,file.node-name=file,write-merging=off
+QMP_VERSION
+{"return": {}}
+{"return": [{"io-status": "ok", "device": "virtio0", "locked": false, "removable": false, "inserted": {"iops_rd": 0, "detect_zeroes": "off", "write_merging": false, "image": {"virtual-size": 134217728, "filename": "json:{\"write-merging\": \"off\", \"driver\": \"raw\", \"file\": {\"driver\": \"file\", \"filename\": \"TEST_DIR/t.raw\"}}", "format": "raw", "actual-size": 0, "dirty-flag": false}, "iops_wr": 0, "ro": false, "backing_file_depth": 0, "drv": "raw", "iops": 0, "bps_wr": 0, "encrypted": false, "bps": 0, "bps_rd": 0, "file": "json:{\"write-merging\": \"off\", \"driver\": \"raw\", \"file\": {\"driver\": \"file\", \"filename\": \"TEST_DIR/t.raw\"}}", "encryption_key_missing": false}, "type": "unknown"}, {"io-status": "ok", "device": "ide1-cd0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}, {"device": "floppy0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}, {"device": "sd0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}]}
+{"return": [{"iops_rd": 0, "detect_zeroes": "off", "write_merging": true, "image": {}, "iops_wr": 0, "ro": false, "node-name": "file", "backing_file_depth": 0, "drv": "file", "iops": 0, "bps_wr": 0, "encrypted": false, "bps": 0, "bps_rd": 0, "file": "TEST_DIR/t.raw", "encryption_key_missing": false}]}
+{"return": {}}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN"}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "DEVICE_TRAY_MOVED", "data": {"device": "ide1-cd0", "tray-open": true}}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "DEVICE_TRAY_MOVED", "data": {"device": "floppy0", "tray-open": true}}
+
+
+=== file.write-merging set to on ===
+
+Testing: -drive file=TEST_DIR/t.raw,format=raw,if=virtio,file.node-name=file,file.write-merging=on
+QMP_VERSION
+{"return": {}}
+{"return": [{"io-status": "ok", "device": "virtio0", "locked": false, "removable": false, "inserted": {"iops_rd": 0, "detect_zeroes": "off", "write_merging": true, "image": {"virtual-size": 134217728, "filename": "TEST_DIR/t.raw", "format": "raw", "actual-size": 0, "dirty-flag": false}, "iops_wr": 0, "ro": false, "backing_file_depth": 0, "drv": "raw", "iops": 0, "bps_wr": 0, "encrypted": false, "bps": 0, "bps_rd": 0, "file": "TEST_DIR/t.raw", "encryption_key_missing": false}, "type": "unknown"}, {"io-status": "ok", "device": "ide1-cd0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}, {"device": "floppy0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}, {"device": "sd0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}]}
+{"return": [{"iops_rd": 0, "detect_zeroes": "off", "write_merging": true, "image": {}, "iops_wr": 0, "ro": false, "node-name": "file", "backing_file_depth": 0, "drv": "file", "iops": 0, "bps_wr": 0, "encrypted": false, "bps": 0, "bps_rd": 0, "file": "TEST_DIR/t.raw", "encryption_key_missing": false}]}
+{"return": {}}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN"}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "DEVICE_TRAY_MOVED", "data": {"device": "ide1-cd0", "tray-open": true}}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "DEVICE_TRAY_MOVED", "data": {"device": "floppy0", "tray-open": true}}
+
+
+=== file.write-merging set to off ===
+
+Testing: -drive file=TEST_DIR/t.raw,format=raw,if=virtio,file.node-name=file,file.write-merging=off
+QMP_VERSION
+{"return": {}}
+{"return": [{"io-status": "ok", "device": "virtio0", "locked": false, "removable": false, "inserted": {"iops_rd": 0, "detect_zeroes": "off", "write_merging": true, "image": {"virtual-size": 134217728, "filename": "TEST_DIR/t.raw", "format": "raw", "actual-size": 0, "dirty-flag": false}, "iops_wr": 0, "ro": false, "backing_file_depth": 0, "drv": "raw", "iops": 0, "bps_wr": 0, "encrypted": false, "bps": 0, "bps_rd": 0, "file": "TEST_DIR/t.raw", "encryption_key_missing": false}, "type": "unknown"}, {"io-status": "ok", "device": "ide1-cd0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}, {"device": "floppy0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}, {"device": "sd0", "locked": false, "removable": true, "tray_open": false, "type": "unknown"}]}
+{"return": [{"iops_rd": 0, "detect_zeroes": "off", "write_merging": false, "image": {}, "iops_wr": 0, "ro": false, "node-name": "file", "backing_file_depth": 0, "drv": "file", "iops": 0, "bps_wr": 0, "encrypted": false, "bps": 0, "bps_rd": 0, "file": "TEST_DIR/t.raw", "encryption_key_missing": false}]}
+{"return": {}}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN"}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "DEVICE_TRAY_MOVED", "data": {"device": "ide1-cd0", "tray-open": true}}
+{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "DEVICE_TRAY_MOVED", "data": {"device": "floppy0", "tray-open": true}}
+
+*** done
