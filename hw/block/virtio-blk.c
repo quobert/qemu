@@ -88,9 +88,6 @@ static void virtio_blk_rw_complete(void *opaque, int ret)
 
     trace_virtio_blk_rw_complete(req, ret);
 
-    printf("virtio_blk_rw_complete p %p ret %d\n",
-           req, ret);
-
     if (ret) {
         int p = virtio_ldl_p(VIRTIO_DEVICE(req->dev), &req->out.type);
         bool is_read = !(p & VIRTIO_BLK_T_OUT);
@@ -264,8 +261,7 @@ static void virtio_multireq_cb(void *opaque, int ret)
 {
     MultiReqBuffer *mrb = opaque;
     int i;
-    printf ("virtio_multireq_cb: p %p sector_num %ld nb_sectors %d is_write %d num_reqs %d\n",
-            mrb, mrb->sector_num, mrb->nb_sectors, mrb->is_write, mrb->num_reqs);    
+
     for (i = 0; i < mrb->num_reqs; i++) {
         virtio_blk_rw_complete(mrb->reqs[i], ret);
     }
@@ -298,9 +294,6 @@ void virtio_submit_multireq(BlockBackend *blk, MultiReqBuffer *mrb0)
     mrb = g_malloc(sizeof(MultiReqBuffer));
     memcpy(mrb, mrb0, sizeof(MultiReqBuffer));
     mrb0->num_reqs = 0;
-
-    printf ("virtio_submit_multireq: p %p sector_num %ld nb_sectors %d is_write %d num_reqs %d\n",
-            mrb, mrb->sector_num, mrb->nb_sectors, mrb->is_write, mrb->num_reqs);
 
     if (mrb->is_write) {
         blk_aio_writev(blk, mrb->sector_num, &mrb->qiov, mrb->nb_sectors,
@@ -417,20 +410,12 @@ void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb)
             trace_virtio_blk_handle_read(req, sector_num, req->qiov.size / BDRV_SECTOR_SIZE);
         }
 
-        int nb_sectors = req->qiov.size / BDRV_SECTOR_SIZE;
-        printf("virtio_blk_handle_request p %p sector_num %ld nb_sectors %d is_write %d\n",
-               req, sector_num, nb_sectors, is_write);
-
         block_acct_start(blk_get_stats(req->dev->blk), &req->acct, req->qiov.size,
                          is_write ? BLOCK_ACCT_WRITE : BLOCK_ACCT_READ);
         
         if (mrb->is_write != is_write) merge = 0;
         if (mrb->num_reqs == MAX_MERGE_REQS) merge = 0;
-        if (mrb->num_reqs) {
-            printf("virtio_blk_handle_request: mrb->num_reqs %d sector_num %ld nb_sectors %d is_write %d\n",
-                   mrb->num_reqs, mrb->sector_num, mrb->nb_sectors, mrb->is_write);
-            if (mrb->sector_num + mrb->nb_sectors != sector_num) merge = 0;
-        }
+        if (mrb->num_reqs && mrb->sector_num + mrb->nb_sectors != sector_num) merge = 0;
         if (mrb->qiov.niov + req->qiov.niov + 1 > IOV_MAX) {
             merge = 0;
         }
