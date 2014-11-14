@@ -15,6 +15,7 @@
 #include "qom/object_interfaces.h"
 #include "qemu/module.h"
 #include "block/aio.h"
+#include "block/coroutine.h"
 #include "sysemu/iothread.h"
 #include "qmp-commands.h"
 #include "qemu/error-report.h"
@@ -47,6 +48,8 @@ static void *iothread_run(void *opaque)
         }
         aio_context_release(iothread->ctx);
     }
+
+    coroutine_pool_cleanup();
     return NULL;
 }
 

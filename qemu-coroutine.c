@@ -24,22 +24,22 @@ enum {
 };
 
 /** Free list to speed up creation */
-static QemuMutex pool_lock;
-static QSLIST_HEAD(, Coroutine) pool = QSLIST_HEAD_INITIALIZER(pool);
-static unsigned int pool_size;
+static __thread struct CoRoutinePool {
+    Coroutine *ptrs[POOL_MAX_SIZE];
+    unsigned int size;
+    unsigned int nextfree;
+} CoPool;
 
 Coroutine *qemu_coroutine_create(CoroutineEntry *entry)
 {
     Coroutine *co = NULL;
-
     if (CONFIG_COROUTINE_POOL) {
-        qemu_mutex_lock(&pool_lock);
-        co = QSLIST_FIRST(&pool);
-        if (co) {
-            QSLIST_REMOVE_HEAD(&pool, pool_next);
-            pool_size--;
+        if (CoPool.size) {
+            co = CoPool.ptrs[CoPool.nextfree];
+            CoPool.size--;
+            CoPool.nextfree--;
+            CoPool.nextfree &= (POOL_MAX_SIZE - 1);
         }
-        qemu_mutex_unlock(&pool_lock);
     }
 
     if (!co) {
@@ -54,36 +54,30 @@ Coroutine *qemu_coroutine_create(CoroutineEntry *entry)
 static void coroutine_delete(Coroutine *co)
 {
     if (CONFIG_COROUTINE_POOL) {
-        qemu_mutex_lock(&pool_lock);
-        if (pool_size < POOL_MAX_SIZE) {
-            QSLIST_INSERT_HEAD(&pool, co, pool_next);
-            co->caller = NULL;
-            pool_size++;
-            qemu_mutex_unlock(&pool_lock);
-            return;
+        CoPool.nextfree++;
+        CoPool.nextfree &= (POOL_MAX_SIZE - 1);
+        if (CoPool.size == POOL_MAX_SIZE) {
+            qemu_coroutine_delete(CoPool.ptrs[CoPool.nextfree]);
+        } else {
+            CoPool.size++;
         }
-        qemu_mutex_unlock(&pool_lock);
+        co->caller = NULL;
+        CoPool.ptrs[CoPool.nextfree] = co;
+    } else {
+        qemu_coroutine_delete(co);
     }
-
-    qemu_coroutine_delete(co);
 }
 
 static void __attribute__((constructor)) coroutine_pool_init(void)
 {
-    qemu_mutex_init(&pool_lock);
 }
 
-static void __attribute__((destructor)) coroutine_pool_cleanup(void)
+void __attribute__((destructor)) coroutine_pool_cleanup(void)
 {
-    Coroutine *co;
-    Coroutine *tmp;
-
-    QSLIST_FOREACH_SAFE(co, &pool, pool_next, tmp) {
-        QSLIST_REMOVE_HEAD(&pool, pool_next);
-        qemu_coroutine_delete(co);
+    printf("coroutine_pool_cleanup %lx pool %p\n", pthread_self(), &CoPool);
+    while (CoPool.size) {
+        qemu_coroutine_delete(qemu_coroutine_create(NULL));
     }
-
-    qemu_mutex_destroy(&pool_lock);
 }
 
 static void coroutine_swap(Coroutine *from, Coroutine *to)
