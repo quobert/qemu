@@ -379,9 +379,10 @@ static void virtio_blk_co_handle_read(void *opaque)
         return;
     }
 
-    bdrv_acct_start(req->dev->bs, &req->acct, req->qiov.size, BDRV_ACCT_READ);
-    ret = bdrv_co_readv(req->dev->bs, sector,
-                   req->qiov.size / BDRV_SECTOR_SIZE, &req->qiov);
+    block_acct_start(blk_get_stats(req->dev->blk), &req->acct, req->qiov.size,
+                     BLOCK_ACCT_READ);
+    ret = bdrv_co_readv(blk_bs(req->dev->blk), sector,
+                        req->qiov.size / BDRV_SECTOR_SIZE, &req->qiov);
     virtio_blk_rw_complete(req, ret);
 }
 
