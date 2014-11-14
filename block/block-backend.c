@@ -15,9 +15,6 @@
 #include "sysemu/blockdev.h"
 #include "qapi-event.h"
 
-/* Number of coroutines to reserve per attached device model */
-#define COROUTINE_POOL_RESERVATION 64
-
 struct BlockBackend {
     char *name;
     int refcnt;
@@ -261,8 +258,6 @@ int blk_attach_dev(BlockBackend *blk, void *dev)
     blk->dev = dev;
     bdrv_iostatus_reset(blk->bs);
 
-    /* We're expecting I/O from the device so bump up coroutine pool size */
-    qemu_coroutine_adjust_pool_size(COROUTINE_POOL_RESERVATION);
     return 0;
 }
 
@@ -290,7 +285,6 @@ void blk_detach_dev(BlockBackend *blk, void *dev)
     blk->dev_ops = NULL;
     blk->dev_opaque = NULL;
     bdrv_set_guest_block_size(blk->bs, 512);
-    qemu_coroutine_adjust_pool_size(-COROUTINE_POOL_RESERVATION);
     blk_unref(blk);
 }
 
