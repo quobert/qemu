@@ -34,6 +34,8 @@ static void *iothread_run(void *opaque)
     IOThread *iothread = opaque;
     bool blocking;
 
+    coroutine_pool_enable_local();
+
     qemu_mutex_lock(&iothread->init_done_lock);
     iothread->thread_id = qemu_get_thread_id();
     qemu_cond_signal(&iothread->init_done_cond);
@@ -49,7 +51,7 @@ static void *iothread_run(void *opaque)
         aio_context_release(iothread->ctx);
     }
 
-    coroutine_pool_cleanup();
+    coroutine_pool_cleanup_local();
     return NULL;
 }
 

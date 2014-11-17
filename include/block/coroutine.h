@@ -96,7 +96,8 @@ Coroutine *coroutine_fn qemu_coroutine_self(void);
  */
 bool qemu_in_coroutine(void);
 
-void coroutine_pool_cleanup(void);
+void coroutine_pool_cleanup_local(void);
+void coroutine_pool_enable_local(void);
 
 /**
  * CoQueues are a mechanism to queue coroutines in order to continue executing
