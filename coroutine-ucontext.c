@@ -144,7 +144,7 @@ Coroutine *qemu_coroutine_new(void)
         abort();
     }
 
-    co = g_malloc0(sizeof(*co));
+    co = g_malloc(sizeof(*co));
     co->stack = g_malloc(stack_size);
     co->base.entry_arg = &old_env; /* stash away our jmp_buf */
 

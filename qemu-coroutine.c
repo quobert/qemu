@@ -69,6 +69,7 @@ Coroutine *qemu_coroutine_create(CoroutineEntry *entry)
     printf("qemu_coroutine_create thread %lx co %p local %d\n", pthread_self(), co, ThreadCoPool.enabled);
 #endif
     co->entry = entry;
+    co->caller = NULL;
     QTAILQ_INIT(&co->co_queue_wakeup);
     return co;
 }
@@ -104,7 +105,6 @@ static void coroutine_delete(Coroutine *co)
 		}
 		ThreadCoPool.ptrs[ThreadCoPool.nextfree] = co;
 	}
-	co->caller = NULL;
 #else
 	qemu_coroutine_delete(co);
 #endif
