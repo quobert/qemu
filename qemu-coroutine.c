@@ -135,6 +135,11 @@ void coroutine_pool_cleanup_local(void)
 #if DEBUG
     printf("coroutine_pool_cleanup %lx pool %p\n", pthread_self(), &ThreadCoPool);
 #endif
+#if CONFIG_COROUTINE_POOL > 0
+    while (ThreadCoPool.size) {
+        qemu_coroutine_delete(qemu_coroutine_create(NULL));
+    }
+#endif
 }
 
 static void __attribute__((destructor)) coroutine_pool_destroy(void)
