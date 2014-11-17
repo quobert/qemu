@@ -20,6 +20,7 @@
 
 #define DEBUG (0)
 
+#if CONFIG_COROUTINE_POOL > 0
 enum {
     /* Maximum free pool size prevents holding too many freed coroutines */
     POOL_MAX_SIZE = 64,
@@ -36,29 +37,30 @@ struct CoRoutinePool {
 
 static __thread struct CoRoutinePool ThreadCoPool;
 static struct CoRoutinePool GlobalCoPool;
+#endif
 
 Coroutine *qemu_coroutine_create(CoroutineEntry *entry)
 {
     Coroutine *co = NULL;
-    if (CONFIG_COROUTINE_POOL) {
-        if (!ThreadCoPool.enabled) {
-			qemu_mutex_lock(&GlobalCoPool.lock);
-			if (GlobalCoPool.size) {
-				co = GlobalCoPool.ptrs[GlobalCoPool.nextfree];
-				GlobalCoPool.size--;
-				GlobalCoPool.nextfree--;
-				GlobalCoPool.nextfree &= (POOL_MAX_SIZE - 1);
-			}
-			qemu_mutex_unlock(&GlobalCoPool.lock);
-		} else {
-			if (ThreadCoPool.size) {
-				co = ThreadCoPool.ptrs[ThreadCoPool.nextfree];
-				ThreadCoPool.size--;
-				ThreadCoPool.nextfree--;
-				ThreadCoPool.nextfree &= (POOL_MAX_SIZE - 1);
-			}
+#if CONFIG_COROUTINE_POOL > 0
+	if (!ThreadCoPool.enabled) {
+		qemu_mutex_lock(&GlobalCoPool.lock);
+		if (GlobalCoPool.size) {
+			co = GlobalCoPool.ptrs[GlobalCoPool.nextfree];
+			GlobalCoPool.size--;
+			GlobalCoPool.nextfree--;
+			GlobalCoPool.nextfree &= (POOL_MAX_SIZE - 1);
 		}
-    }
+		qemu_mutex_unlock(&GlobalCoPool.lock);
+	} else {
+		if (ThreadCoPool.size) {
+			co = ThreadCoPool.ptrs[ThreadCoPool.nextfree];
+			ThreadCoPool.size--;
+			ThreadCoPool.nextfree--;
+			ThreadCoPool.nextfree &= (POOL_MAX_SIZE - 1);
+		}
+	}
+#endif
 
     if (!co) {
         co = qemu_coroutine_new();
@@ -76,36 +78,36 @@ static void coroutine_delete(Coroutine *co)
 #if DEBUG > 1
     printf("coroutine_delete thread %lx co %p local %d\n", pthread_self(), co, ThreadCoPool.enabled);
 #endif
-    if (CONFIG_COROUTINE_POOL) {
-        if (!ThreadCoPool.enabled) {
-			Coroutine *delete_co = NULL;
-			qemu_mutex_lock(&GlobalCoPool.lock);
-			GlobalCoPool.nextfree++;
-			GlobalCoPool.nextfree &= (POOL_MAX_SIZE - 1);
-			if (GlobalCoPool.size == POOL_MAX_SIZE) {
-				delete_co = GlobalCoPool.ptrs[GlobalCoPool.nextfree];
-			} else {
-				GlobalCoPool.size++;
-			}
-			GlobalCoPool.ptrs[GlobalCoPool.nextfree] = co;
-			qemu_mutex_unlock(&GlobalCoPool.lock);
-			if (delete_co) {
-				qemu_coroutine_delete(delete_co);
-			}
+#if CONFIG_COROUTINE_POOL > 0
+	if (!ThreadCoPool.enabled) {
+		Coroutine *delete_co = NULL;
+		qemu_mutex_lock(&GlobalCoPool.lock);
+		GlobalCoPool.nextfree++;
+		GlobalCoPool.nextfree &= (POOL_MAX_SIZE - 1);
+		if (GlobalCoPool.size == POOL_MAX_SIZE) {
+			delete_co = GlobalCoPool.ptrs[GlobalCoPool.nextfree];
 		} else {
-			ThreadCoPool.nextfree++;
-			ThreadCoPool.nextfree &= (POOL_MAX_SIZE - 1);
-			if (ThreadCoPool.size == POOL_MAX_SIZE) {
-				qemu_coroutine_delete(ThreadCoPool.ptrs[ThreadCoPool.nextfree]);
-			} else {
-				ThreadCoPool.size++;
-			}
-			ThreadCoPool.ptrs[ThreadCoPool.nextfree] = co;
+			GlobalCoPool.size++;
 		}
-		co->caller = NULL;
-    } else {
-        qemu_coroutine_delete(co);
-    }
+		GlobalCoPool.ptrs[GlobalCoPool.nextfree] = co;
+		qemu_mutex_unlock(&GlobalCoPool.lock);
+		if (delete_co) {
+			qemu_coroutine_delete(delete_co);
+		}
+	} else {
+		ThreadCoPool.nextfree++;
+		ThreadCoPool.nextfree &= (POOL_MAX_SIZE - 1);
+		if (ThreadCoPool.size == POOL_MAX_SIZE) {
+			qemu_coroutine_delete(ThreadCoPool.ptrs[ThreadCoPool.nextfree]);
+		} else {
+			ThreadCoPool.size++;
+		}
+		ThreadCoPool.ptrs[ThreadCoPool.nextfree] = co;
+	}
+	co->caller = NULL;
+#else
+	qemu_coroutine_delete(co);
+#endif
 }
 
 static void __attribute__((constructor)) coroutine_pool_init(void)
@@ -113,7 +115,9 @@ static void __attribute__((constructor)) coroutine_pool_init(void)
 #if DEBUG
     printf("coroutine_pool_init %lx pool %p coroutine pool %d\n", pthread_self(), &ThreadCoPool, CONFIG_COROUTINE_POOL);
 #endif
+#if CONFIG_COROUTINE_POOL > 0
     qemu_mutex_init(&GlobalCoPool.lock);
+#endif
 }
 
 void coroutine_pool_enable_local(void)
@@ -121,7 +125,9 @@ void coroutine_pool_enable_local(void)
 #if DEBUG
     printf("coroutine_pool_enable %lx pool %p\n", pthread_self(), &ThreadCoPool);
 #endif
+#if CONFIG_COROUTINE_POOL > 0
     ThreadCoPool.enabled = true;
+#endif
 }
 
 void coroutine_pool_cleanup_local(void)
@@ -136,10 +142,12 @@ static void __attribute__((destructor)) coroutine_pool_destroy(void)
 #if DEBUG
     printf("coroutine_pool_destroy %lx pool %p\n", pthread_self(), &ThreadCoPool);
 #endif
+#if CONFIG_COROUTINE_POOL > 0
     while (GlobalCoPool.size) {
         qemu_coroutine_delete(qemu_coroutine_create(NULL));
     }
     qemu_mutex_destroy(&GlobalCoPool.lock);
+#endif
 }
 
 
