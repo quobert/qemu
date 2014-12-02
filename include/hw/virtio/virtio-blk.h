@@ -134,13 +134,6 @@ typedef struct VirtIOBlock {
     struct VirtIOBlockDataPlane *dataplane;
 } VirtIOBlock;
 
-#define VIRTIO_BLK_MAX_MERGE_REQS 32
-
-typedef struct MultiReqBuffer {
-    BlockRequest        blkreq[VIRTIO_BLK_MAX_MERGE_REQS];
-    unsigned int        num_writes;
-} MultiReqBuffer;
-
 typedef struct VirtIOBlockReq {
     VirtIOBlock *dev;
     VirtQueueElement elem;
@@ -151,6 +144,17 @@ typedef struct VirtIOBlockReq {
     BlockAcctCookie acct;
 } VirtIOBlockReq;
 
+#define MAX_MERGE_REQS 32
+
+typedef struct MultiReqBuffer {
+    VirtIOBlockReq *reqs[MAX_MERGE_REQS];
+    unsigned int   num_reqs;
+    bool           is_write;
+    QEMUIOVector   qiov;
+    int64_t        sector_num;
+    int            nb_sectors;
+} MultiReqBuffer;
+
 VirtIOBlockReq *virtio_blk_alloc_request(VirtIOBlock *s);
 
 void virtio_blk_free_request(VirtIOBlockReq *req);
@@ -158,8 +162,9 @@ void virtio_blk_free_request(VirtIOBlockReq *req);
 int virtio_blk_handle_scsi_req(VirtIOBlock *blk,
                                VirtQueueElement *elem);
 
-void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb);
+void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb_wr,
+                               MultiReqBuffer *mrb_rd);
 
-void virtio_submit_multiwrite(BlockBackend *blk, MultiReqBuffer *mrb);
+void virtio_submit_multireq(BlockBackend *blk, MultiReqBuffer *mrb);
 
 #endif

@@ -96,9 +96,8 @@ static void handle_notify(EventNotifier *e)
     event_notifier_test_and_clear(&s->host_notifier);
     blk_io_plug(s->conf->conf.blk);
     for (;;) {
-        MultiReqBuffer mrb = {
-            .num_writes = 0,
-        };
+        MultiReqBuffer mrb_rd = {};
+        MultiReqBuffer mrb_wr = {.is_write = 1};
         int ret;
 
         /* Disable guest->host notifies to avoid unnecessary vmexits */
@@ -117,10 +116,11 @@ static void handle_notify(EventNotifier *e)
                                                         req->elem.in_num,
                                                         req->elem.index);
 
-            virtio_blk_handle_request(req, &mrb);
+            virtio_blk_handle_request(req, &mrb_wr, &mrb_rd);
         }
 
-        virtio_submit_multiwrite(s->conf->conf.blk, &mrb);
+        virtio_submit_multireq(s->conf->conf.blk, &mrb_wr);
+        virtio_submit_multireq(s->conf->conf.blk, &mrb_rd);
 
         if (likely(ret == -EAGAIN)) { /* vring emptied */
             /* Re-enable guest->host notifies and stop processing the vring.
