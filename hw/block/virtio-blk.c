@@ -284,6 +284,7 @@ static void virtio_multireq_cb(void *opaque, int ret)
 void virtio_submit_multireq(BlockBackend *blk, MultiReqBuffer *mrb0)
 {
     MultiReqBuffer *mrb = NULL;
+    int i;
 
     if (!mrb0->num_reqs) {
         return;
@@ -297,7 +298,6 @@ void virtio_submit_multireq(BlockBackend *blk, MultiReqBuffer *mrb0)
             blk_aio_readv(blk, mrb0->sector_num, &mrb0->reqs[0]->qiov, mrb0->nb_sectors,
                           virtio_blk_rw_complete, mrb0->reqs[0]);
         }
-        qemu_iovec_destroy(&mrb0->qiov);
         mrb0->num_reqs = 0;
         return;
     }
@@ -305,6 +305,13 @@ void virtio_submit_multireq(BlockBackend *blk, MultiReqBuffer *mrb0)
     mrb = g_malloc(sizeof(MultiReqBuffer));
     memcpy(mrb, mrb0, sizeof(MultiReqBuffer));
     mrb0->num_reqs = 0;
+
+    qemu_iovec_init(&mrb->qiov, mrb->num_reqs);
+
+    for (i = 0; i < mrb->num_reqs; i++) {
+        qemu_iovec_concat(&mrb->qiov, &mrb->reqs[i]->qiov, 0, mrb->reqs[i]->qiov.size);
+    }
+    assert(mrb->nb_sectors == mrb->qiov.size / BDRV_SECTOR_SIZE);
 
 #ifdef DEBUG_MULTIREQ
     printf("virtio_submit_multireq: p %p sector_num %ld nb_sectors %d is_write %d num_reqs %d\n",
@@ -461,17 +468,14 @@ void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb_wr,
         }
 
         if (mrb->num_reqs == 0) {
-            qemu_iovec_init(&mrb->qiov, MAX_MERGE_REQS);
             mrb->sector_num = sector_num;
             mrb->nb_sectors = 0;
+            mrb->qiov.niov = 0;
         }
 
-        qemu_iovec_concat(&mrb->qiov, &req->qiov, 0, req->qiov.size);
         mrb->nb_sectors += req->qiov.size / BDRV_SECTOR_SIZE;
-
-        assert(mrb->nb_sectors == mrb->qiov.size / BDRV_SECTOR_SIZE);
-
         mrb->reqs[mrb->num_reqs] = req;
+        mrb->qiov.niov += req->qiov.niov;
         mrb->num_reqs++;
     } else {
         virtio_blk_req_complete(req, VIRTIO_BLK_S_UNSUPP);
