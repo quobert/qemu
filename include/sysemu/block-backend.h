@@ -114,8 +114,14 @@ int blk_aio_multiwrite(BlockBackend *blk, BlockRequest *reqs, int num_reqs);
 int blk_ioctl(BlockBackend *blk, unsigned long int req, void *buf);
 BlockAIOCB *blk_aio_ioctl(BlockBackend *blk, unsigned long int req, void *buf,
                           BlockCompletionFunc *cb, void *opaque);
+
+int coroutine_fn blk_co_readv(BlockBackend *blk, int64_t sector_num,
+                              int nb_sectors, QEMUIOVector *qiov);
+int coroutine_fn blk_co_writev(BlockBackend *blk, int64_t sector_num,
+                               int nb_sectors, QEMUIOVector *qiov);
 int blk_co_discard(BlockBackend *blk, int64_t sector_num, int nb_sectors);
 int blk_co_flush(BlockBackend *blk);
+
 int blk_flush(BlockBackend *blk);
 int blk_flush_all(void);
 void blk_drain(BlockBackend *blk);

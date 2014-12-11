@@ -675,6 +675,18 @@ BlockAIOCB *blk_aio_ioctl(BlockBackend *blk, unsigned long int req, void *buf,
     return bdrv_aio_ioctl(blk->bs, req, buf, cb, opaque);
 }
 
+int coroutine_fn blk_co_readv(BlockBackend *blk, int64_t sector_num,
+                              int nb_sectors, QEMUIOVector *qiov)
+{
+    return bdrv_co_readv(blk->bs, sector_num, nb_sectors, qiov);
+}
+
+int coroutine_fn blk_co_writev(BlockBackend *blk, int64_t sector_num,
+                               int nb_sectors, QEMUIOVector *qiov)
+{
+    return bdrv_co_writev(blk->bs, sector_num, nb_sectors, qiov);
+}
+
 int blk_co_discard(BlockBackend *blk, int64_t sector_num, int nb_sectors)
 {
     int ret = blk_check_request(blk, sector_num, nb_sectors);
