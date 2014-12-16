@@ -34,6 +34,8 @@ VirtIOBlockReq *virtio_blk_alloc_request(VirtIOBlock *s)
     req->dev = s;
     req->qiov.size = 0;
     req->next = NULL;
+    req->mr_next = NULL;
+    req->mr_qiov.nalloc = 0;
     return req;
 }
 
@@ -84,20 +86,29 @@ static int virtio_blk_handle_rw_error(VirtIOBlockReq *req, int error,
 
 static void virtio_blk_rw_complete(void *opaque, int ret)
 {
-    VirtIOBlockReq *req = opaque;
+    VirtIOBlockReq *next = opaque;
 
-    trace_virtio_blk_rw_complete(req, ret);
+    while (next) {
+        VirtIOBlockReq *req = next;
+        next = req->mr_next;
+        trace_virtio_blk_rw_complete(req, ret);
 
-    if (ret) {
-        int p = virtio_ldl_p(VIRTIO_DEVICE(req->dev), &req->out.type);
-        bool is_read = !(p & VIRTIO_BLK_T_OUT);
-        if (virtio_blk_handle_rw_error(req, -ret, is_read))
-            return;
+        if (req->mr_qiov.nalloc) {
+            qemu_iovec_destroy(&req->mr_qiov);
+        }
+
+        if (ret) {
+            int p = virtio_ldl_p(VIRTIO_DEVICE(req->dev), &req->out.type);
+            bool is_read = !(p & VIRTIO_BLK_T_OUT);
+            if (virtio_blk_handle_rw_error(req, -ret, is_read)) {
+                continue;
+            }
+        }
+
+        virtio_blk_req_complete(req, VIRTIO_BLK_S_OK);
+        block_acct_done(blk_get_stats(req->dev->blk), &req->acct);
+        virtio_blk_free_request(req);
     }
-
-    virtio_blk_req_complete(req, VIRTIO_BLK_S_OK);
-    block_acct_done(blk_get_stats(req->dev->blk), &req->acct);
-    virtio_blk_free_request(req);
 }
 
 static void virtio_blk_flush_complete(void *opaque, int ret)
@@ -257,24 +268,49 @@ static void virtio_blk_handle_scsi(VirtIOBlockReq *req)
     virtio_blk_free_request(req);
 }
 
-void virtio_submit_multiwrite(BlockBackend *blk, MultiReqBuffer *mrb)
+void virtio_submit_multireq(BlockBackend *blk, MultiReqBuffer *mrb)
 {
-    int i, ret;
+    QEMUIOVector *qiov = &mrb->reqs[0]->qiov;
+    bool is_write = mrb->is_write;
 
-    if (!mrb->num_writes) {
+    if (!mrb->num_reqs) {
         return;
     }
 
-    ret = blk_aio_multiwrite(blk, mrb->blkreq, mrb->num_writes);
-    if (ret != 0) {
-        for (i = 0; i < mrb->num_writes; i++) {
-            if (mrb->blkreq[i].error) {
-                virtio_blk_rw_complete(mrb->blkreq[i].opaque, -EIO);
+    if (mrb->num_reqs > 1) {
+        int i;
+
+        trace_virtio_blk_submit_multireq(mrb, mrb->num_reqs, mrb->sector_num,
+                                         mrb->nb_sectors, is_write);
+
+        qiov = &mrb->reqs[0]->mr_qiov;
+        qemu_iovec_init(qiov, mrb->niov);
+
+        for (i = 0; i < mrb->num_reqs; i++) {
+            qemu_iovec_concat(qiov, &mrb->reqs[i]->qiov, 0,
+                              mrb->reqs[i]->qiov.size);
+            if (i) {
+                mrb->reqs[i - 1]->mr_next = mrb->reqs[i];
             }
         }
+        assert(mrb->nb_sectors == qiov->size / BDRV_SECTOR_SIZE);
+
+        block_acct_merge_done(blk_get_stats(blk),
+                              is_write ? BLOCK_ACCT_WRITE : BLOCK_ACCT_READ,
+                              mrb->num_reqs - 1);
     }
 
-    mrb->num_writes = 0;
+    if (is_write) {
+        blk_aio_writev(blk, mrb->sector_num, qiov, mrb->nb_sectors,
+                       virtio_blk_rw_complete, mrb->reqs[0]);
+    } else {
+        blk_aio_readv(blk, mrb->sector_num, qiov, mrb->nb_sectors,
+                      virtio_blk_rw_complete, mrb->reqs[0]);
+    }
+
+    mrb->num_reqs = 0;
+    mrb->nb_sectors = 0;
+    mrb->niov = 0;
 }
 
 static void virtio_blk_handle_flush(VirtIOBlockReq *req, MultiReqBuffer *mrb)
@@ -285,7 +321,9 @@ static void virtio_blk_handle_flush(VirtIOBlockReq *req, MultiReqBuffer *mrb)
     /*
      * Make sure all outstanding writes are posted to the backing device.
      */
-    virtio_submit_multiwrite(req->dev->blk, mrb);
+    if (mrb->is_write) {
+        virtio_submit_multireq(req->dev->blk, mrb);
+    }
     blk_aio_flush(req->dev->blk, virtio_blk_flush_complete, req);
 }
 
@@ -295,6 +333,9 @@ static bool virtio_blk_sect_range_ok(VirtIOBlock *dev,
     uint64_t nb_sectors = size >> BDRV_SECTOR_BITS;
     uint64_t total_sectors;
 
+    if (nb_sectors > INT_MAX) {
+        return false;
+    }
     if (sector & dev->sector_mask) {
         return false;
     }
@@ -306,60 +347,6 @@ static bool virtio_blk_sect_range_ok(VirtIOBlock *dev,
         return false;
     }
     return true;
-}
-
-static void virtio_blk_handle_write(VirtIOBlockReq *req, MultiReqBuffer *mrb)
-{
-    BlockRequest *blkreq;
-    uint64_t sector;
-
-    sector = virtio_ldq_p(VIRTIO_DEVICE(req->dev), &req->out.sector);
-
-    trace_virtio_blk_handle_write(req, sector, req->qiov.size / 512);
-
-    if (!virtio_blk_sect_range_ok(req->dev, sector, req->qiov.size)) {
-        virtio_blk_req_complete(req, VIRTIO_BLK_S_IOERR);
-        virtio_blk_free_request(req);
-        return;
-    }
-
-    block_acct_start(blk_get_stats(req->dev->blk), &req->acct, req->qiov.size,
-                     BLOCK_ACCT_WRITE);
-
-    if (mrb->num_writes == VIRTIO_BLK_MAX_MERGE_REQS) {
-        virtio_submit_multiwrite(req->dev->blk, mrb);
-    }
-
-    blkreq = &mrb->blkreq[mrb->num_writes];
-    blkreq->sector = sector;
-    blkreq->nb_sectors = req->qiov.size / BDRV_SECTOR_SIZE;
-    blkreq->qiov = &req->qiov;
-    blkreq->cb = virtio_blk_rw_complete;
-    blkreq->opaque = req;
-    blkreq->error = 0;
-
-    mrb->num_writes++;
-}
-
-static void virtio_blk_handle_read(VirtIOBlockReq *req)
-{
-    uint64_t sector;
-
-    sector = virtio_ldq_p(VIRTIO_DEVICE(req->dev), &req->out.sector);
-
-    trace_virtio_blk_handle_read(req, sector, req->qiov.size / 512);
-
-    if (!virtio_blk_sect_range_ok(req->dev, sector, req->qiov.size)) {
-        virtio_blk_req_complete(req, VIRTIO_BLK_S_IOERR);
-        virtio_blk_free_request(req);
-        return;
-    }
-
-    block_acct_start(blk_get_stats(req->dev->blk), &req->acct, req->qiov.size,
-                     BLOCK_ACCT_READ);
-    blk_aio_readv(req->dev->blk, sector, &req->qiov,
-                  req->qiov.size / BDRV_SECTOR_SIZE,
-                  virtio_blk_rw_complete, req);
 }
 
 void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb)
@@ -396,11 +383,15 @@ void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb)
 
     type = virtio_ldl_p(VIRTIO_DEVICE(req->dev), &req->out.type);
 
-    if (type & VIRTIO_BLK_T_FLUSH) {
+    switch (type & 0xff) {
+    case VIRTIO_BLK_T_FLUSH:
         virtio_blk_handle_flush(req, mrb);
-    } else if (type & VIRTIO_BLK_T_SCSI_CMD) {
+        break;
+    case VIRTIO_BLK_T_SCSI_CMD:
         virtio_blk_handle_scsi(req);
-    } else if (type & VIRTIO_BLK_T_GET_ID) {
+        break;
+    case VIRTIO_BLK_T_GET_ID:
+    {
         VirtIOBlock *s = req->dev;
 
         /*
@@ -414,14 +405,81 @@ void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb)
         iov_from_buf(in_iov, in_num, 0, serial, size);
         virtio_blk_req_complete(req, VIRTIO_BLK_S_OK);
         virtio_blk_free_request(req);
-    } else if (type & VIRTIO_BLK_T_OUT) {
-        qemu_iovec_init_external(&req->qiov, iov, out_num);
-        virtio_blk_handle_write(req, mrb);
-    } else if (type == VIRTIO_BLK_T_IN || type == VIRTIO_BLK_T_BARRIER) {
-        /* VIRTIO_BLK_T_IN is 0, so we can't just & it. */
-        qemu_iovec_init_external(&req->qiov, in_iov, in_num);
-        virtio_blk_handle_read(req);
-    } else {
+        break;
+    }
+    case VIRTIO_BLK_T_IN:
+    case VIRTIO_BLK_T_OUT:
+    {
+        bool is_write = type & VIRTIO_BLK_T_OUT;
+        int64_t sector_num = virtio_ldq_p(VIRTIO_DEVICE(req->dev),
+                                          &req->out.sector);
+        int64_t max_xfer_len = blk_get_max_transfer_length(req->dev->blk);
+        int64_t nb_sectors = 0;
+        bool merge = true;
+
+        if (!virtio_blk_sect_range_ok(req->dev, sector_num, req->qiov.size)) {
+            virtio_blk_req_complete(req, VIRTIO_BLK_S_IOERR);
+            virtio_blk_free_request(req);
+            return;
+        }
+
+        if (is_write) {
+            qemu_iovec_init_external(&req->qiov, iov, out_num);
+            trace_virtio_blk_handle_write(req, sector_num,
+                                          req->qiov.size / BDRV_SECTOR_SIZE);
+        } else {
+            qemu_iovec_init_external(&req->qiov, in_iov, in_num);
+            trace_virtio_blk_handle_read(req, sector_num,
+                                         req->qiov.size / BDRV_SECTOR_SIZE);
+        }
+
+        nb_sectors = req->qiov.size / BDRV_SECTOR_SIZE;
+        max_xfer_len = MIN_NON_ZERO(max_xfer_len, INT_MAX);
+
+        block_acct_start(blk_get_stats(req->dev->blk),
+                         &req->acct, req->qiov.size,
+                         is_write ? BLOCK_ACCT_WRITE : BLOCK_ACCT_READ);
+
+        /* merge would exceed maximum number of requests or IOVs */
+        if (mrb->num_reqs == VIRTIO_BLK_MAX_MERGE_REQS ||
+            mrb->niov + req->qiov.niov + 1 > IOV_MAX) {
+            merge = false;
+        }
+
+        /* merge would exceed maximum transfer length of backend device */
+        if (nb_sectors + mrb->nb_sectors > max_xfer_len) {
+            merge = false;
+        }
+
+        /* requests are not sequential */
+        if (mrb->num_reqs && mrb->sector_num + mrb->nb_sectors != sector_num) {
+            merge = false;
+        }
+
+        /* if we switch from read to write or vise versa we should submit
+         * outstanding requests to avoid unnecessary and potential long delays.
+         * Furthermore we share the same struct for read and write merging so
+         * submission is a must here. */
+        if (is_write != mrb->is_write) {
+            merge = false;
+        }
+
+        if (!merge) {
+            virtio_submit_multireq(req->dev->blk, mrb);
+        }
+
+        if (mrb->num_reqs == 0) {
+            mrb->sector_num = sector_num;
+            mrb->is_write = is_write;
+        }
+
+        mrb->nb_sectors += req->qiov.size / BDRV_SECTOR_SIZE;
+        mrb->reqs[mrb->num_reqs] = req;
+        mrb->niov += req->qiov.niov;
+        mrb->num_reqs++;
+        break;
+    }
+    default:
         virtio_blk_req_complete(req, VIRTIO_BLK_S_UNSUPP);
         virtio_blk_free_request(req);
     }
@@ -431,9 +489,7 @@ static void virtio_blk_handle_output(VirtIODevice *vdev, VirtQueue *vq)
 {
     VirtIOBlock *s = VIRTIO_BLK(vdev);
     VirtIOBlockReq *req;
-    MultiReqBuffer mrb = {
-        .num_writes = 0,
-    };
+    MultiReqBuffer mrb = {};
 
     /* Some guests kick before setting VIRTIO_CONFIG_S_DRIVER_OK so start
      * dataplane here instead of waiting for .set_status().
@@ -447,7 +503,7 @@ static void virtio_blk_handle_output(VirtIODevice *vdev, VirtQueue *vq)
         virtio_blk_handle_request(req, &mrb);
     }
 
-    virtio_submit_multiwrite(s->blk, &mrb);
+    virtio_submit_multireq(s->blk, &mrb);
 
     /*
      * FIXME: Want to check for completions before returning to guest mode,
@@ -460,9 +516,7 @@ static void virtio_blk_dma_restart_bh(void *opaque)
 {
     VirtIOBlock *s = opaque;
     VirtIOBlockReq *req = s->rq;
-    MultiReqBuffer mrb = {
-        .num_writes = 0,
-    };
+    MultiReqBuffer mrb = {};
 
     qemu_bh_delete(s->bh);
     s->bh = NULL;
@@ -475,7 +529,7 @@ static void virtio_blk_dma_restart_bh(void *opaque)
         req = next;
     }
 
-    virtio_submit_multiwrite(s->blk, &mrb);
+    virtio_submit_multireq(s->blk, &mrb);
 }
 
 static void virtio_blk_dma_restart_cb(void *opaque, int running,
