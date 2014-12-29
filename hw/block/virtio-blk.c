@@ -857,7 +857,7 @@ static void virtio_blk_instance_init(Object *obj)
 {
     VirtIOBlock *s = VIRTIO_BLK(obj);
 
-    s->conf.num_queues = 1;    /* num of queue has to be at least 1 */
+    s->conf.num_queues = MIN(smp_cpus, sizeof(unsigned int) * BITS_PER_BYTE);
     object_property_add_link(obj, "iothread", TYPE_IOTHREAD,
                              (Object **)&s->conf.iothread,
                              qdev_prop_allow_set_link_before_realize,
