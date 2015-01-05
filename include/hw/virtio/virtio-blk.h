@@ -154,6 +154,12 @@ typedef struct VirtIOBlockReq {
     QEMUIOVector mr_qiov;
     struct VirtIOBlockReq *mr_next;
     unsigned qid;
+    QEMUIOVector *co_qiov;
+    int64_t sector_num;
+    int nb_sectors;
+    bool is_write;
+    QEMUBH *bh;
+    int ret;
 } VirtIOBlockReq;
 
 #define VIRTIO_BLK_MAX_MERGE_REQS 32
