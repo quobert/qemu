@@ -149,6 +149,7 @@ typedef struct VirtIOBlockReq {
     struct virtio_blk_inhdr *in;
     struct virtio_blk_outhdr out;
     QEMUIOVector qiov;
+    int64_t sector_num;
     struct VirtIOBlockReq *next;
     BlockAcctCookie acct;
     QEMUIOVector mr_qiov;
@@ -162,9 +163,6 @@ typedef struct MultiReqBuffer {
     VirtIOBlockReq *reqs[VIRTIO_BLK_MAX_MERGE_REQS];
     unsigned int num_reqs;
     bool is_write;
-    int niov;
-    int64_t sector_num;
-    int nb_sectors;
 } MultiReqBuffer;
 
 VirtIOBlockReq *virtio_blk_alloc_request(VirtIOBlock *s);

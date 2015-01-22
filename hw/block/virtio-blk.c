@@ -270,49 +270,128 @@ static void virtio_blk_handle_scsi(VirtIOBlockReq *req)
     virtio_blk_free_request(req);
 }
 
+static void virtio_submit_multireq2(BlockBackend *blk, MultiReqBuffer *mrb,
+                             int start, int num_reqs, int niov)
+{
+    QEMUIOVector *qiov = &mrb->reqs[start]->qiov;
+    int64_t sector_num = mrb->reqs[start]->sector_num;
+    int nb_sectors = mrb->reqs[start]->qiov.size / BDRV_SECTOR_SIZE;
+    bool is_write = mrb->is_write;
+
+    if (num_reqs > 1) {
+        int i;
+
+        qiov = &mrb->reqs[start]->mr_qiov;
+        qemu_iovec_init(qiov, niov);
+
+        for (i = start; i < start + num_reqs; i++) {
+            qemu_iovec_concat(qiov, &mrb->reqs[i]->qiov, 0,
+                              mrb->reqs[i]->qiov.size);
+            if (i > start) {
+                mrb->reqs[i - 1]->mr_next = mrb->reqs[i];
+                nb_sectors += mrb->reqs[i]->qiov.size / BDRV_SECTOR_SIZE;
+            }
+        }
+        assert(nb_sectors == qiov->size / BDRV_SECTOR_SIZE);
+
+        trace_virtio_blk_submit_multireq(mrb, start, num_reqs, sector_num,
+                                         nb_sectors, is_write);
+
+        block_acct_merge_done(blk_get_stats(blk),
+                              is_write ? BLOCK_ACCT_WRITE : BLOCK_ACCT_READ,
+                              num_reqs - 1);
+    }
+
+    if (is_write) {
+        blk_aio_writev(blk, sector_num, qiov, nb_sectors,
+                       virtio_blk_rw_complete, mrb->reqs[start]);
+    } else {
+        blk_aio_readv(blk, sector_num, qiov, nb_sectors,
+                      virtio_blk_rw_complete, mrb->reqs[start]);
+    }
+    num_reqs = 0;
+}
+
+static int virtio_multireq_compare(const void *a, const void *b)
+{
+    const VirtIOBlockReq *req1 = *(VirtIOBlockReq **)a,
+                         *req2 = *(VirtIOBlockReq **)b;
+
+    /*
+     * Note that we can't simply subtract req2->sector_num from req1->sector_num
+     * here as that could overflow the return value.
+     */
+    if (req1->sector_num > req2->sector_num) {
+        return 1;
+    } else if (req1->sector_num < req2->sector_num) {
+        return -1;
+    } else {
+        return 0;
+    }
+}
+
 void virtio_submit_multireq(BlockBackend *blk, MultiReqBuffer *mrb)
 {
-    QEMUIOVector *qiov = &mrb->reqs[0]->qiov;
-    bool is_write = mrb->is_write;
+    int i = 0, start = 0, num_reqs = 0, niov = 0, nb_sectors = 0,
+        max_xfer_len = 0;
+    int64_t sector_num = 0;
 
     if (!mrb->num_reqs) {
         return;
     }
 
-    if (mrb->num_reqs > 1) {
-        int i;
+    if (mrb->num_reqs == 1) {
+        virtio_submit_multireq2(blk, mrb, 0, 1, -1);
+        mrb->num_reqs = 0;
+        return;
+    }
 
-        trace_virtio_blk_submit_multireq(mrb, mrb->num_reqs, mrb->sector_num,
-                                         mrb->nb_sectors, is_write);
+    max_xfer_len = blk_get_max_transfer_length(mrb->reqs[0]->dev->blk);
+    max_xfer_len = MIN_NON_ZERO(max_xfer_len, INT_MAX);
 
-        qiov = &mrb->reqs[0]->mr_qiov;
-        qemu_iovec_init(qiov, mrb->niov);
+    qsort(mrb->reqs, mrb->num_reqs, sizeof(*mrb->reqs),
+          &virtio_multireq_compare);
 
-        for (i = 0; i < mrb->num_reqs; i++) {
-            qemu_iovec_concat(qiov, &mrb->reqs[i]->qiov, 0,
-                              mrb->reqs[i]->qiov.size);
-            if (i) {
-                mrb->reqs[i - 1]->mr_next = mrb->reqs[i];
+    for (i = 0; i < mrb->num_reqs; i++) {
+        VirtIOBlockReq *req = mrb->reqs[i];
+        if (num_reqs > 0) {
+            bool merge = true;
+
+            /* merge would exceed maximum number of requests or IOVs */
+            if (num_reqs == VIRTIO_BLK_MAX_MERGE_REQS ||
+                niov + req->qiov.niov + 1 > IOV_MAX) {
+                merge = false;
+            }
+
+            /* merge would exceed maximum transfer length of backend device */
+            if (req->qiov.size / BDRV_SECTOR_SIZE + nb_sectors > max_xfer_len) {
+                merge = false;
+            }
+
+            /* requests are not sequential */
+            if (sector_num + nb_sectors != req->sector_num) {
+                merge = false;
+            }
+
+            if (!merge) {
+                virtio_submit_multireq2(blk, mrb, start, num_reqs, niov);
+                num_reqs = 0;
             }
         }
-        assert(mrb->nb_sectors == qiov->size / BDRV_SECTOR_SIZE);
 
-        block_acct_merge_done(blk_get_stats(blk),
-                              is_write ? BLOCK_ACCT_WRITE : BLOCK_ACCT_READ,
-                              mrb->num_reqs - 1);
+        if (num_reqs == 0) {
+            sector_num = req->sector_num;
+            nb_sectors = niov = 0;
+            start = i;
+        }
+
+        nb_sectors += req->qiov.size / BDRV_SECTOR_SIZE;
+        niov += req->qiov.niov;
+        num_reqs++;
     }
 
-    if (is_write) {
-        blk_aio_writev(blk, mrb->sector_num, qiov, mrb->nb_sectors,
-                       virtio_blk_rw_complete, mrb->reqs[0]);
-    } else {
-        blk_aio_readv(blk, mrb->sector_num, qiov, mrb->nb_sectors,
-                      virtio_blk_rw_complete, mrb->reqs[0]);
-    }
-
+    virtio_submit_multireq2(blk, mrb, start, num_reqs, niov);
     mrb->num_reqs = 0;
-    mrb->nb_sectors = 0;
-    mrb->niov = 0;
 }
 
 static void virtio_blk_handle_flush(VirtIOBlockReq *req, MultiReqBuffer *mrb)
@@ -413,13 +492,11 @@ void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb)
     case VIRTIO_BLK_T_OUT:
     {
         bool is_write = type & VIRTIO_BLK_T_OUT;
-        int64_t sector_num = virtio_ldq_p(VIRTIO_DEVICE(req->dev),
-                                          &req->out.sector);
-        int64_t max_xfer_len = blk_get_max_transfer_length(req->dev->blk);
-        int64_t nb_sectors = 0;
-        bool merge = true;
+        req->sector_num = virtio_ldq_p(VIRTIO_DEVICE(req->dev),
+                                       &req->out.sector);
 
-        if (!virtio_blk_sect_range_ok(req->dev, sector_num, req->qiov.size)) {
+        if (!virtio_blk_sect_range_ok(req->dev, req->sector_num,
+                                      req->qiov.size)) {
             virtio_blk_req_complete(req, VIRTIO_BLK_S_IOERR);
             virtio_blk_free_request(req);
             return;
@@ -427,58 +504,26 @@ void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb)
 
         if (is_write) {
             qemu_iovec_init_external(&req->qiov, iov, out_num);
-            trace_virtio_blk_handle_write(req, sector_num,
+            trace_virtio_blk_handle_write(req, req->sector_num,
                                           req->qiov.size / BDRV_SECTOR_SIZE);
         } else {
             qemu_iovec_init_external(&req->qiov, in_iov, in_num);
-            trace_virtio_blk_handle_read(req, sector_num,
+            trace_virtio_blk_handle_read(req, req->sector_num,
                                          req->qiov.size / BDRV_SECTOR_SIZE);
         }
-
-        nb_sectors = req->qiov.size / BDRV_SECTOR_SIZE;
-        max_xfer_len = MIN_NON_ZERO(max_xfer_len, INT_MAX);
 
         block_acct_start(blk_get_stats(req->dev->blk),
                          &req->acct, req->qiov.size,
                          is_write ? BLOCK_ACCT_WRITE : BLOCK_ACCT_READ);
 
-        /* merge would exceed maximum number of requests or IOVs */
+        /* merge would exceed maximum number of requests */
         if (mrb->num_reqs == VIRTIO_BLK_MAX_MERGE_REQS ||
-            mrb->niov + req->qiov.niov + 1 > IOV_MAX) {
-            merge = false;
-        }
-
-        /* merge would exceed maximum transfer length of backend device */
-        if (nb_sectors + mrb->nb_sectors > max_xfer_len) {
-            merge = false;
-        }
-
-        /* requests are not sequential */
-        if (mrb->num_reqs && mrb->sector_num + mrb->nb_sectors != sector_num) {
-            merge = false;
-        }
-
-        /* if we switch from read to write or vise versa we should submit
-         * outstanding requests to avoid unnecessary and potential long delays.
-         * Furthermore we share the same struct for read and write merging so
-         * submission is a must here. */
-        if (is_write != mrb->is_write) {
-            merge = false;
-        }
-
-        if (!merge) {
+            is_write != mrb->is_write) {
             virtio_submit_multireq(req->dev->blk, mrb);
         }
 
-        if (mrb->num_reqs == 0) {
-            mrb->sector_num = sector_num;
-            mrb->is_write = is_write;
-        }
-
-        mrb->nb_sectors += req->qiov.size / BDRV_SECTOR_SIZE;
-        mrb->reqs[mrb->num_reqs] = req;
-        mrb->niov += req->qiov.niov;
-        mrb->num_reqs++;
+        mrb->reqs[mrb->num_reqs++] = req;
+        mrb->is_write = is_write;
         break;
     }
     default:
