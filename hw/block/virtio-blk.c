@@ -270,13 +270,27 @@ static void virtio_blk_handle_scsi(VirtIOBlockReq *req)
     virtio_blk_free_request(req);
 }
 
+static void virtio_co_submit_multireq(void *opaque) {
+    VirtIOBlockReq *req = opaque;
+    int ret;
+    if (req->is_write) {
+        ret = blk_co_writev(req->dev->blk, req->sector_num, 
+                            req->nb_sectors, req->co_qiov);
+    } else {
+        ret = blk_co_readv(req->dev->blk, req->sector_num, 
+                           req->nb_sectors, req->co_qiov);
+    }
+    virtio_blk_rw_complete(req, ret);
+}
+
 static void virtio_submit_multireq2(BlockBackend *blk, MultiReqBuffer *mrb,
                              int start, int num_reqs, int niov)
 {
     QEMUIOVector *qiov = &mrb->reqs[start]->qiov;
     int64_t sector_num = mrb->reqs[start]->sector_num;
-    int nb_sectors = mrb->reqs[start]->qiov.size / BDRV_SECTOR_SIZE;
+    int nb_sectors = mrb->reqs[start]->nb_sectors;
     bool is_write = mrb->is_write;
+    Coroutine *co;
 
     if (num_reqs > 1) {
         int i;
@@ -288,7 +302,7 @@ static void virtio_submit_multireq2(BlockBackend *blk, MultiReqBuffer *mrb,
             qemu_iovec_concat(qiov, &mrb->reqs[i]->qiov, 0,
                               mrb->reqs[i]->qiov.size);
             mrb->reqs[i - 1]->mr_next = mrb->reqs[i];
-            nb_sectors += mrb->reqs[i]->qiov.size / BDRV_SECTOR_SIZE;
+            nb_sectors += mrb->reqs[i]->nb_sectors;
         }
         assert(nb_sectors == qiov->size / BDRV_SECTOR_SIZE);
 
@@ -303,14 +317,11 @@ static void virtio_submit_multireq2(BlockBackend *blk, MultiReqBuffer *mrb,
 		printf("virtio_submit_multireq2: #%d p %p sector_num %ld nb_sectors %d\n", start, mrb->reqs[start], sector_num, nb_sectors);
 	}
 
-
-    if (is_write) {
-        blk_aio_writev(blk, sector_num, qiov, nb_sectors,
-                       virtio_blk_rw_complete, mrb->reqs[start]);
-    } else {
-        blk_aio_readv(blk, sector_num, qiov, nb_sectors,
-                      virtio_blk_rw_complete, mrb->reqs[start]);
-    }
+    mrb->reqs[start]->co_qiov = qiov;
+    mrb->reqs[start]->is_write = is_write;
+    mrb->reqs[start]->nb_sectors = nb_sectors;
+    co = qemu_coroutine_create(virtio_co_submit_multireq);
+    qemu_coroutine_enter(co, mrb->reqs[start]);
 }
 
 static int virtio_multireq_compare(const void *a, const void *b)
@@ -371,7 +382,7 @@ void virtio_submit_multireq(BlockBackend *blk, MultiReqBuffer *mrb)
             }
 
             /* merge would exceed maximum transfer length of backend device */
-            if (req->qiov.size / BDRV_SECTOR_SIZE + nb_sectors > max_xfer_len) {
+            if (req->nb_sectors + nb_sectors > max_xfer_len) {
                 merge = false;
             }
 
@@ -392,7 +403,7 @@ void virtio_submit_multireq(BlockBackend *blk, MultiReqBuffer *mrb)
             start = i;
         }
 
-        nb_sectors += req->qiov.size / BDRV_SECTOR_SIZE;
+        nb_sectors += req->nb_sectors;
         niov += req->qiov.niov;
         num_reqs++;
     }
@@ -508,16 +519,18 @@ void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb)
             virtio_blk_free_request(req);
             return;
         }
-
+        
         if (is_write) {
             qemu_iovec_init_external(&req->qiov, iov, out_num);
             trace_virtio_blk_handle_write(req, req->sector_num,
-                                          req->qiov.size / BDRV_SECTOR_SIZE);
+                                          req->nb_sectors);
         } else {
             qemu_iovec_init_external(&req->qiov, in_iov, in_num);
             trace_virtio_blk_handle_read(req, req->sector_num,
-                                         req->qiov.size / BDRV_SECTOR_SIZE);
+                                         req->nb_sectors);
         }
+
+        req->nb_sectors = req->qiov.size / BDRV_SECTOR_SIZE;
 
         block_acct_start(blk_get_stats(req->dev->blk),
                          &req->acct, req->qiov.size,
@@ -530,7 +543,7 @@ void virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb)
         }
 
         if (VIRTIO_BLK_DEBUG && is_write) {
-			printf ("> req p %p sector_num %ld nb_sectors %llu\n", req, req->sector_num,  req->qiov.size / BDRV_SECTOR_SIZE);
+			printf ("> req p %p sector_num %ld nb_sectors %d\n", req, req->sector_num,  req->nb_sectors);
 		}
 
         mrb->reqs[mrb->num_reqs++] = req;

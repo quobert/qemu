@@ -141,10 +141,13 @@ typedef struct VirtIOBlockReq {
     struct virtio_blk_outhdr out;
     QEMUIOVector qiov;
     int64_t sector_num;
+    int nb_sectors;
     struct VirtIOBlockReq *next;
     BlockAcctCookie acct;
     QEMUIOVector mr_qiov;
     struct VirtIOBlockReq *mr_next;
+    QEMUIOVector *co_qiov;
+    bool is_write;
 } VirtIOBlockReq;
 
 #define VIRTIO_BLK_MAX_MERGE_REQS 32
