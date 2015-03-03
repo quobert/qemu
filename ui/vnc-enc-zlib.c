@@ -47,7 +47,7 @@ void vnc_zlib_zfree(void *x, void *addr)
 
 static void vnc_zlib_start(VncState *vs)
 {
-    buffer_reset(&vs->zlib.zlib);
+    qio_buffer_reset(&vs->zlib.zlib);
 
     // make the output buffer be the zlib buffer, so we can compress it later
     vs->zlib.tmp = vs->output;
@@ -96,7 +96,7 @@ static int vnc_zlib_stop(VncState *vs)
     }
 
     // reserve memory in output buffer
-    buffer_reserve(&vs->output, vs->zlib.zlib.offset + 64);
+    qio_buffer_reserve(&vs->output, vs->zlib.zlib.offset + 64);
 
     // set pointers
     zstream->next_in = vs->zlib.zlib.buffer;
@@ -148,5 +148,5 @@ void vnc_zlib_clear(VncState *vs)
     if (vs->zlib.stream.opaque) {
         deflateEnd(&vs->zlib.stream);
     }
-    buffer_free(&vs->zlib.zlib);
+    qio_buffer_free(&vs->zlib.zlib);
 }

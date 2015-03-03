@@ -95,8 +95,8 @@ void vncws_handshake_read(void *opaque)
     /* Typical HTTP headers from novnc are 512 bytes, so limiting
      * total header size to 4096 is easily enough. */
     size_t want = 4096 - vs->ws_input.offset;
-    buffer_reserve(&vs->ws_input, want);
-    ret = vnc_client_read_buf(vs, buffer_end(&vs->ws_input), want);
+    qio_buffer_reserve(&vs->ws_input, want);
+    ret = vnc_client_read_buf(vs, qio_buffer_end(&vs->ws_input), want);
 
     if (!ret) {
         if (vs->csock == -1) {
@@ -111,7 +111,7 @@ void vncws_handshake_read(void *opaque)
     if (handshake_end) {
         qemu_set_fd_handler(vs->csock, vnc_client_read, NULL, vs);
         vncws_process_handshake(vs, vs->ws_input.buffer, vs->ws_input.offset);
-        buffer_advance(&vs->ws_input, handshake_end - vs->ws_input.buffer +
+        qio_buffer_advance(&vs->ws_input, handshake_end - vs->ws_input.buffer +
                 strlen(WS_HANDSHAKE_END));
     } else if (vs->ws_input.offset >= 4096) {
         VNC_DEBUG("End of headers not found in first 4096 bytes\n");
@@ -127,8 +127,8 @@ long vnc_client_read_ws(VncState *vs)
     size_t payload_size, header_size;
     VNC_DEBUG("Read websocket %p size %zd offset %zd\n", vs->ws_input.buffer,
             vs->ws_input.capacity, vs->ws_input.offset);
-    buffer_reserve(&vs->ws_input, 4096);
-    ret = vnc_client_read_buf(vs, buffer_end(&vs->ws_input), 4096);
+    qio_buffer_reserve(&vs->ws_input, 4096);
+    ret = vnc_client_read_buf(vs, qio_buffer_end(&vs->ws_input), 4096);
     if (!ret) {
         return 0;
     }
@@ -146,7 +146,7 @@ long vnc_client_read_ws(VncState *vs)
                 return err;
             }
 
-            buffer_advance(&vs->ws_input, header_size);
+            qio_buffer_advance(&vs->ws_input, header_size);
         }
         if (vs->ws_payload_remain != 0) {
             err = vncws_decode_frame_payload(&vs->ws_input,
@@ -162,10 +162,10 @@ long vnc_client_read_ws(VncState *vs)
             }
             ret += err;
 
-            buffer_reserve(&vs->input, payload_size);
-            buffer_append(&vs->input, payload, payload_size);
+            qio_buffer_reserve(&vs->input, payload_size);
+            qio_buffer_append(&vs->input, payload, payload_size);
 
-            buffer_advance(&vs->ws_input, payload_size);
+            qio_buffer_advance(&vs->ws_input, payload_size);
         }
     } while (vs->ws_input.offset > 0);
 
@@ -178,13 +178,13 @@ long vnc_client_write_ws(VncState *vs)
     VNC_DEBUG("Write WS: Pending output %p size %zd offset %zd\n",
               vs->output.buffer, vs->output.capacity, vs->output.offset);
     vncws_encode_frame(&vs->ws_output, vs->output.buffer, vs->output.offset);
-    buffer_reset(&vs->output);
+    qio_buffer_reset(&vs->output);
     ret = vnc_client_write_buf(vs, vs->ws_output.buffer, vs->ws_output.offset);
     if (!ret) {
         return 0;
     }
 
-    buffer_advance(&vs->ws_output, ret);
+    qio_buffer_advance(&vs->ws_output, ret);
 
     if (vs->ws_output.offset == 0) {
         qemu_set_fd_handler(vs->csock, vnc_client_read, NULL, vs);
@@ -267,8 +267,8 @@ void vncws_process_handshake(VncState *vs, uint8_t *line, size_t size)
     g_free(key);
 }
 
-void vncws_encode_frame(Buffer *output, const void *payload,
-        const size_t payload_size)
+void vncws_encode_frame(QIOBuffer *output, const void *payload,
+                        const size_t payload_size)
 {
     size_t header_size = 0;
     unsigned char opcode = WS_OPCODE_BINARY_FRAME;
@@ -295,12 +295,12 @@ void vncws_encode_frame(Buffer *output, const void *payload,
         header_size = 10;
     }
 
-    buffer_reserve(output, header_size + payload_size);
-    buffer_append(output, header.buf, header_size);
-    buffer_append(output, payload, payload_size);
+    qio_buffer_reserve(output, header_size + payload_size);
+    qio_buffer_append(output, header.buf, header_size);
+    qio_buffer_append(output, payload, payload_size);
 }
 
-int vncws_decode_frame_header(Buffer *input,
+int vncws_decode_frame_header(QIOBuffer *input,
                               size_t *header_size,
                               size_t *payload_remain,
                               WsMask *payload_mask)
@@ -354,7 +354,7 @@ int vncws_decode_frame_header(Buffer *input,
     return 1;
 }
 
-int vncws_decode_frame_payload(Buffer *input,
+int vncws_decode_frame_payload(QIOBuffer *input,
                                size_t *payload_remain, WsMask *payload_mask,
                                uint8_t **payload, size_t *payload_size)
 {
