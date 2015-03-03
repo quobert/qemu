@@ -34,6 +34,7 @@
 #include "audio/audio.h"
 #include "qemu/bitmap.h"
 #include "crypto/tlssession.h"
+#include "io/buffer.h"
 #include <zlib.h>
 #include <stdbool.h>
 
@@ -55,13 +56,6 @@
  * Core data structures
  *
  *****************************************************************************/
-
-typedef struct Buffer
-{
-    size_t capacity;
-    size_t offset;
-    uint8_t *buffer;
-} Buffer;
 
 typedef struct VncState VncState;
 typedef struct VncJob VncJob;
@@ -191,15 +185,15 @@ typedef struct VncTight {
     uint8_t quality;
     uint8_t compression;
     uint8_t pixel24;
-    Buffer tight;
-    Buffer tmp;
-    Buffer zlib;
-    Buffer gradient;
+    QIOBuffer tight;
+    QIOBuffer tmp;
+    QIOBuffer zlib;
+    QIOBuffer gradient;
 #ifdef CONFIG_VNC_JPEG
-    Buffer jpeg;
+    QIOBuffer jpeg;
 #endif
 #ifdef CONFIG_VNC_PNG
-    Buffer png;
+    QIOBuffer png;
 #endif
     int levels[4];
     z_stream stream[4];
@@ -210,18 +204,18 @@ typedef struct VncHextile {
 } VncHextile;
 
 typedef struct VncZlib {
-    Buffer zlib;
-    Buffer tmp;
+    QIOBuffer zlib;
+    QIOBuffer tmp;
     z_stream stream;
     int level;
 } VncZlib;
 
 typedef struct VncZrle {
     int type;
-    Buffer fb;
-    Buffer zrle;
-    Buffer tmp;
-    Buffer zlib;
+    QIOBuffer fb;
+    QIOBuffer zrle;
+    QIOBuffer tmp;
+    QIOBuffer zlib;
     z_stream stream;
     VncPalette palette;
 } VncZrle;
@@ -290,10 +284,10 @@ struct VncState
 
     VncClientInfo *info;
 
-    Buffer output;
-    Buffer input;
-    Buffer ws_input;
-    Buffer ws_output;
+    QIOBuffer output;
+    QIOBuffer input;
+    QIOBuffer ws_input;
+    QIOBuffer ws_output;
     size_t ws_payload_remain;
     WsMask ws_payload_mask;
     /* current output mode information */
@@ -315,7 +309,7 @@ struct VncState
     bool initialized;
     QemuMutex output_mutex;
     QEMUBH *bh;
-    Buffer jobs_buffer;
+    QIOBuffer jobs_buffer;
 
     /* Encoding specific, if you add something here, don't forget to
      *  update vnc_async_encoding_start()
@@ -534,14 +528,6 @@ ssize_t vnc_client_io_error(VncState *vs, ssize_t ret, int last_errno);
 
 void start_client_init(VncState *vs);
 void start_auth_vnc(VncState *vs);
-
-/* Buffer management */
-void buffer_reserve(Buffer *buffer, size_t len);
-void buffer_reset(Buffer *buffer);
-void buffer_free(Buffer *buffer);
-void buffer_append(Buffer *buffer, const void *data, size_t len);
-void buffer_advance(Buffer *buf, size_t len);
-uint8_t *buffer_end(Buffer *buffer);
 
 
 /* Misc helpers */

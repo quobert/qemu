@@ -77,13 +77,13 @@ void vncws_handshake_read(void *opaque);
 long vnc_client_write_ws(VncState *vs);
 long vnc_client_read_ws(VncState *vs);
 void vncws_process_handshake(VncState *vs, uint8_t *line, size_t size);
-void vncws_encode_frame(Buffer *output, const void *payload,
+void vncws_encode_frame(QIOBuffer *output, const void *payload,
             const size_t payload_size);
-int vncws_decode_frame_header(Buffer *input,
+int vncws_decode_frame_header(QIOBuffer *input,
                               size_t *header_size,
                               size_t *payload_remain,
                               WsMask *payload_mask);
-int vncws_decode_frame_payload(Buffer *input,
+int vncws_decode_frame_payload(QIOBuffer *input,
                                size_t *payload_remain, WsMask *payload_mask,
                                uint8_t **payload, size_t *payload_size);
 

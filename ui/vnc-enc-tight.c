@@ -856,7 +856,7 @@ static int tight_compress_data(VncState *vs, int stream_id, size_t bytes,
     }
 
     /* reserve memory in output buffer */
-    buffer_reserve(&vs->tight.zlib, bytes + 64);
+    qio_buffer_reserve(&vs->tight.zlib, bytes + 64);
 
     /* set pointers */
     zstream->next_in = vs->tight.tight.buffer;
@@ -879,7 +879,7 @@ static int tight_compress_data(VncState *vs, int stream_id, size_t bytes,
     tight_send_compact_size(vs, bytes);
     vnc_write(vs, vs->tight.zlib.buffer, bytes);
 
-    buffer_reset(&vs->tight.zlib);
+    qio_buffer_reset(&vs->tight.zlib);
 
     return bytes;
 }
@@ -1053,7 +1053,7 @@ static bool send_gradient_rect(VncState *vs, int x, int y, int w, int h)
     vnc_write_u8(vs, (stream | VNC_TIGHT_EXPLICIT_FILTER) << 4);
     vnc_write_u8(vs, VNC_TIGHT_FILTER_GRADIENT);
 
-    buffer_reserve(&vs->tight.gradient, w * 3 * sizeof (int));
+    qio_buffer_reserve(&vs->tight.gradient, w * 3 * sizeof(int));
 
     if (vs->tight.pixel24) {
         tight_filter_gradient24(vs, vs->tight.tight.buffer, w, h);
@@ -1066,7 +1066,7 @@ static bool send_gradient_rect(VncState *vs, int x, int y, int w, int h)
         bytes = 2;
     }
 
-    buffer_reset(&vs->tight.gradient);
+    qio_buffer_reset(&vs->tight.gradient);
 
     bytes = w * h * bytes;
     vs->tight.tight.offset = bytes;
@@ -1149,7 +1149,7 @@ static int send_palette_rect(VncState *vs, int x, int y,
 static void jpeg_init_destination(j_compress_ptr cinfo)
 {
     VncState *vs = cinfo->client_data;
-    Buffer *buffer = &vs->tight.jpeg;
+    QIOBuffer *buffer = &vs->tight.jpeg;
 
     cinfo->dest->next_output_byte = (JOCTET *)buffer->buffer + buffer->offset;
     cinfo->dest->free_in_buffer = (size_t)(buffer->capacity - buffer->offset);
@@ -1159,10 +1159,10 @@ static void jpeg_init_destination(j_compress_ptr cinfo)
 static boolean jpeg_empty_output_buffer(j_compress_ptr cinfo)
 {
     VncState *vs = cinfo->client_data;
-    Buffer *buffer = &vs->tight.jpeg;
+    QIOBuffer *buffer = &vs->tight.jpeg;
 
     buffer->offset = buffer->capacity;
-    buffer_reserve(buffer, 2048);
+    qio_buffer_reserve(buffer, 2048);
     jpeg_init_destination(cinfo);
     return TRUE;
 }
@@ -1171,7 +1171,7 @@ static boolean jpeg_empty_output_buffer(j_compress_ptr cinfo)
 static void jpeg_term_destination(j_compress_ptr cinfo)
 {
     VncState *vs = cinfo->client_data;
-    Buffer *buffer = &vs->tight.jpeg;
+    QIOBuffer *buffer = &vs->tight.jpeg;
 
     buffer->offset = buffer->capacity - cinfo->dest->free_in_buffer;
 }
@@ -1190,7 +1190,7 @@ static int send_jpeg_rect(VncState *vs, int x, int y, int w, int h, int quality)
         return send_full_color_rect(vs, x, y, w, h);
     }
 
-    buffer_reserve(&vs->tight.jpeg, 2048);
+    qio_buffer_reserve(&vs->tight.jpeg, 2048);
 
     cinfo.err = jpeg_std_error(&jerr);
     jpeg_create_compress(&cinfo);
@@ -1227,7 +1227,7 @@ static int send_jpeg_rect(VncState *vs, int x, int y, int w, int h, int quality)
 
     tight_send_compact_size(vs, vs->tight.jpeg.offset);
     vnc_write(vs, vs->tight.jpeg.buffer, vs->tight.jpeg.offset);
-    buffer_reset(&vs->tight.jpeg);
+    qio_buffer_reset(&vs->tight.jpeg);
 
     return 1;
 }
@@ -1270,7 +1270,7 @@ static void png_write_data(png_structp png_ptr, png_bytep data,
 {
     VncState *vs = png_get_io_ptr(png_ptr);
 
-    buffer_reserve(&vs->tight.png, vs->tight.png.offset + length);
+    qio_buffer_reserve(&vs->tight.png, vs->tight.png.offset + length);
     memcpy(vs->tight.png.buffer + vs->tight.png.offset, data, length);
 
     vs->tight.png.offset += length;
@@ -1351,7 +1351,7 @@ static int send_png_rect(VncState *vs, int x, int y, int w, int h,
 
     png_write_info(png_ptr, info_ptr);
 
-    buffer_reserve(&vs->tight.png, 2048);
+    qio_buffer_reserve(&vs->tight.png, 2048);
     linebuf = qemu_pixman_linebuf_create(PIXMAN_BE_r8g8b8, w);
     buf = (uint8_t *)pixman_image_get_data(linebuf);
     for (dy = 0; dy < h; dy++)
@@ -1377,14 +1377,14 @@ static int send_png_rect(VncState *vs, int x, int y, int w, int h,
 
     tight_send_compact_size(vs, vs->tight.png.offset);
     vnc_write(vs, vs->tight.png.buffer, vs->tight.png.offset);
-    buffer_reset(&vs->tight.png);
+    qio_buffer_reset(&vs->tight.png);
     return 1;
 }
 #endif /* CONFIG_VNC_PNG */
 
 static void vnc_tight_start(VncState *vs)
 {
-    buffer_reset(&vs->tight.tight);
+    qio_buffer_reset(&vs->tight.tight);
 
     // make the output buffer be the zlib buffer, so we can compress it later
     vs->tight.tmp = vs->output;
@@ -1686,13 +1686,13 @@ void vnc_tight_clear(VncState *vs)
         }
     }
 
-    buffer_free(&vs->tight.tight);
-    buffer_free(&vs->tight.zlib);
-    buffer_free(&vs->tight.gradient);
+    qio_buffer_free(&vs->tight.tight);
+    qio_buffer_free(&vs->tight.zlib);
+    qio_buffer_free(&vs->tight.gradient);
 #ifdef CONFIG_VNC_JPEG
-    buffer_free(&vs->tight.jpeg);
+    qio_buffer_free(&vs->tight.jpeg);
 #endif
 #ifdef CONFIG_VNC_PNG
-    buffer_free(&vs->tight.png);
+    qio_buffer_free(&vs->tight.png);
 #endif
 }

@@ -113,8 +113,8 @@ long vnc_client_read_sasl(VncState *vs)
         return vnc_client_io_error(vs, -1, -EIO);
     VNC_DEBUG("Read SASL Encoded %p size %ld Decoded %p size %d\n",
               encoded, ret, decoded, decodedLen);
-    buffer_reserve(&vs->input, decodedLen);
-    buffer_append(&vs->input, decoded, decodedLen);
+    qio_buffer_reserve(&vs->input, decodedLen);
+    qio_buffer_append(&vs->input, decoded, decodedLen);
     return decodedLen;
 }
 

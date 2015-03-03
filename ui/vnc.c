@@ -647,49 +647,6 @@ void vnc_framebuffer_update(VncState *vs, int x, int y, int w, int h,
     vnc_write_s32(vs, encoding);
 }
 
-void buffer_reserve(Buffer *buffer, size_t len)
-{
-    if ((buffer->capacity - buffer->offset) < len) {
-        buffer->capacity += (len + 1024);
-        buffer->buffer = g_realloc(buffer->buffer, buffer->capacity);
-    }
-}
-
-static int buffer_empty(Buffer *buffer)
-{
-    return buffer->offset == 0;
-}
-
-uint8_t *buffer_end(Buffer *buffer)
-{
-    return buffer->buffer + buffer->offset;
-}
-
-void buffer_reset(Buffer *buffer)
-{
-        buffer->offset = 0;
-}
-
-void buffer_free(Buffer *buffer)
-{
-    g_free(buffer->buffer);
-    buffer->offset = 0;
-    buffer->capacity = 0;
-    buffer->buffer = NULL;
-}
-
-void buffer_append(Buffer *buffer, const void *data, size_t len)
-{
-    memcpy(buffer->buffer + buffer->offset, data, len);
-    buffer->offset += len;
-}
-
-void buffer_advance(Buffer *buf, size_t len)
-{
-    memmove(buf->buffer, buf->buffer + len,
-            (buf->offset - len));
-    buf->offset -= len;
-}
 
 static void vnc_desktop_resize(VncState *vs)
 {
@@ -1236,10 +1193,10 @@ void vnc_disconnect_finish(VncState *vs)
     vnc_lock_output(vs);
     vnc_qmp_event(vs, QAPI_EVENT_VNC_DISCONNECTED);
 
-    buffer_free(&vs->input);
-    buffer_free(&vs->output);
-    buffer_free(&vs->ws_input);
-    buffer_free(&vs->ws_output);
+    qio_buffer_free(&vs->input);
+    qio_buffer_free(&vs->output);
+    qio_buffer_free(&vs->ws_input);
+    qio_buffer_free(&vs->ws_output);
 
     qapi_free_VncClientInfo(vs->info);
 
@@ -1267,7 +1224,7 @@ void vnc_disconnect_finish(VncState *vs)
     if (vs->bh != NULL) {
         qemu_bh_delete(vs->bh);
     }
-    buffer_free(&vs->jobs_buffer);
+    qio_buffer_free(&vs->jobs_buffer);
 
     for (i = 0; i < VNC_STAT_ROWS; ++i) {
         g_free(vs->lossy_rect[i]);
@@ -1409,7 +1366,7 @@ static ssize_t vnc_client_write_plain(VncState *vs)
     if (!ret)
         return 0;
 
-    buffer_advance(&vs->output, ret);
+    qio_buffer_advance(&vs->output, ret);
 
     if (vs->output.offset == 0) {
         qemu_set_fd_handler(vs->csock, vnc_client_read, NULL, vs);
@@ -1512,8 +1469,8 @@ static ssize_t vnc_client_read_plain(VncState *vs)
     ssize_t ret;
     VNC_DEBUG("Read plain %p size %zd offset %zd\n",
               vs->input.buffer, vs->input.capacity, vs->input.offset);
-    buffer_reserve(&vs->input, 4096);
-    ret = vnc_client_read_buf(vs, buffer_end(&vs->input), 4096);
+    qio_buffer_reserve(&vs->input, 4096);
+    ret = vnc_client_read_buf(vs, qio_buffer_end(&vs->input), 4096);
     if (!ret)
         return 0;
     vs->input.offset += ret;
@@ -1571,7 +1528,7 @@ void vnc_client_read(void *opaque)
         }
 
         if (!ret) {
-            buffer_advance(&vs->input, len);
+            qio_buffer_advance(&vs->input, len);
         } else {
             vs->read_handler_expect = ret;
         }
@@ -1580,13 +1537,13 @@ void vnc_client_read(void *opaque)
 
 void vnc_write(VncState *vs, const void *data, size_t len)
 {
-    buffer_reserve(&vs->output, len);
+    qio_buffer_reserve(&vs->output, len);
 
-    if (vs->csock != -1 && buffer_empty(&vs->output)) {
+    if (vs->csock != -1 && qio_buffer_empty(&vs->output)) {
         qemu_set_fd_handler(vs->csock, vnc_client_read, vnc_client_write, vs);
     }
 
-    buffer_append(&vs->output, data, len);
+    qio_buffer_append(&vs->output, data, len);
 }
 
 void vnc_write_s32(VncState *vs, int32_t value)

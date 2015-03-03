@@ -54,7 +54,7 @@ struct VncJobQueue {
     QemuCond cond;
     QemuMutex mutex;
     QemuThread thread;
-    Buffer buffer;
+    QIOBuffer buffer;
     bool exit;
     QTAILQ_HEAD(, VncJob) jobs;
 };
@@ -167,7 +167,7 @@ void vnc_jobs_consume_buffer(VncState *vs)
     vnc_lock_output(vs);
     if (vs->jobs_buffer.offset) {
         vnc_write(vs, vs->jobs_buffer.buffer, vs->jobs_buffer.offset);
-        buffer_reset(&vs->jobs_buffer);
+        qio_buffer_reset(&vs->jobs_buffer);
     }
     flush = vs->csock != -1 && vs->abort != true;
     vnc_unlock_output(vs);
@@ -196,7 +196,7 @@ static void vnc_async_encoding_start(VncState *orig, VncState *local)
     local->output =  queue->buffer;
     local->csock = -1; /* Don't do any network work on this thread */
 
-    buffer_reset(&local->output);
+    qio_buffer_reset(&local->output);
 }
 
 static void vnc_async_encoding_end(VncState *orig, VncState *local)
@@ -273,10 +273,11 @@ static int vnc_worker_thread_loop(VncJobQueue *queue)
     vs.output.buffer[saved_offset + 1] = n_rectangles & 0xFF;
 
     vnc_lock_output(job->vs);
+
     if (job->vs->csock != -1) {
-        buffer_reserve(&job->vs->jobs_buffer, vs.output.offset);
-        buffer_append(&job->vs->jobs_buffer, vs.output.buffer,
-                      vs.output.offset);
+        qio_buffer_reserve(&job->vs->jobs_buffer, vs.output.offset);
+        qio_buffer_append(&job->vs->jobs_buffer, vs.output.buffer,
+                          vs.output.offset);
         /* Copy persistent encoding data */
         vnc_async_encoding_end(job->vs, &vs);
 
@@ -310,7 +311,7 @@ static void vnc_queue_clear(VncJobQueue *q)
 {
     qemu_cond_destroy(&queue->cond);
     qemu_mutex_destroy(&queue->mutex);
-    buffer_free(&queue->buffer);
+    qio_buffer_free(&queue->buffer);
     g_free(q);
     queue = NULL; /* Unset global queue */
 }
