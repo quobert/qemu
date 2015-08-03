@@ -1221,6 +1221,8 @@ enum ImgConvertBlockStatus {
     BLK_BACKING_FILE,
 };
 
+#define CONVERT_MAX_INFLIGHT 4
+
 typedef struct ImgConvertState {
     BlockBackend **src;
     int64_t *src_sectors;
@@ -1228,6 +1230,8 @@ typedef struct ImgConvertState {
     int64_t src_cur_offset;
     int64_t total_sectors;
     int64_t allocated_sectors;
+    int64_t sector_num;
+    int64_t allocated_done;
     enum ImgConvertBlockStatus status;
     int64_t sector_next_status;
     BlockBackend *target;
@@ -1237,6 +1241,9 @@ typedef struct ImgConvertState {
     int min_sparse;
     size_t cluster_sectors;
     size_t buf_sectors;
+    int in_flight;
+    int finished;
+    int ret;
 } ImgConvertState;
 
 static void convert_select_part(ImgConvertState *s, int64_t sector_num)
@@ -1305,15 +1312,31 @@ static int convert_iteration_sectors(ImgConvertState *s, int64_t sector_num)
     return n;
 }
 
-static int convert_read(ImgConvertState *s, int64_t sector_num, int nb_sectors,
-                        uint8_t *buf)
+typedef struct convert_req {
+    Coroutine *co;
+    QEMUBH *bh;
+    ImgConvertState *s;
+    int64_t sector_num;
+    int nb_sectors;
+    uint8_t *buf;
+} convert_req;
+
+static int convert_read_co(void *opaque)
 {
+    convert_req *req = opaque;
+    ImgConvertState *s = req->s;
+    int64_t sector_num = req->sector_num;
+    int nb_sectors = req->nb_sectors;
+    uint8_t *buf = req->buf;
     int n;
     int ret;
+    QEMUIOVector qiov;
 
     if (s->status == BLK_ZERO || s->status == BLK_BACKING_FILE) {
         return 0;
     }
+
+    qemu_iovec_init(&qiov, 1);
 
     assert(nb_sectors <= s->buf_sectors);
     while (nb_sectors > 0) {
@@ -1328,7 +1351,11 @@ static int convert_read(ImgConvertState *s, int64_t sector_num, int nb_sectors,
         bs_sectors = s->src_sectors[s->src_cur];
 
         n = MIN(nb_sectors, bs_sectors - (sector_num - s->src_cur_offset));
-        ret = blk_read(blk, sector_num - s->src_cur_offset, buf, n);
+
+        qemu_iovec_reset(&qiov);
+        qemu_iovec_add(&qiov, buf, n << BDRV_SECTOR_BITS);
+
+        ret = blk_co_readv(blk, sector_num - s->src_cur_offset, n, &qiov);
         if (ret < 0) {
             return ret;
         }
@@ -1337,14 +1364,22 @@ static int convert_read(ImgConvertState *s, int64_t sector_num, int nb_sectors,
         nb_sectors -= n;
         buf += n * BDRV_SECTOR_SIZE;
     }
+    qemu_iovec_destroy(&qiov);
 
     return 0;
 }
 
-static int convert_write(ImgConvertState *s, int64_t sector_num, int nb_sectors,
-                         const uint8_t *buf)
+static int convert_write_co(void *opaque)
 {
+    convert_req *req = opaque;
+    ImgConvertState *s = req->s;
+    int64_t sector_num = req->sector_num;
+    int nb_sectors = req->nb_sectors;
+    uint8_t *buf = req->buf;
     int ret;
+    QEMUIOVector qiov;
+
+    qemu_iovec_init(&qiov, 1);
 
     while (nb_sectors > 0) {
         int n = nb_sectors;
@@ -1383,7 +1418,10 @@ static int convert_write(ImgConvertState *s, int64_t sector_num, int nb_sectors,
             if (!s->min_sparse ||
                 is_allocated_sectors_min(buf, n, &n, s->min_sparse))
             {
-                ret = blk_write(s->target, sector_num, buf, n);
+                qemu_iovec_reset(&qiov);
+                qemu_iovec_add(&qiov, buf, n << BDRV_SECTOR_BITS);
+
+                ret = blk_co_writev(s->target, sector_num, n, &qiov);
                 if (ret < 0) {
                     return ret;
                 }
@@ -1407,13 +1445,80 @@ static int convert_write(ImgConvertState *s, int64_t sector_num, int nb_sectors,
         buf += n * BDRV_SECTOR_SIZE;
     }
 
+    qemu_iovec_destroy(&qiov);
     return 0;
+}
+
+static void convert_fill_queue(ImgConvertState *s);
+
+static void convert_copy_co(void *opaque)
+{
+	convert_req *req = opaque;
+	int ret;
+	req->s->in_flight++;
+	printf("r");
+	ret = convert_read_co(req);
+	printf("R");
+	if (ret < 0) {
+		error_report("error while reading sector %" PRId64
+					 ": %s", req->sector_num, strerror(-ret));
+		goto out;
+	}
+
+    //XXX: we might need to ensure writes are in order.
+    printf ("w");
+	ret = convert_write_co(req);
+	printf ("W");
+	if (ret < 0) {
+		error_report("error while writing sector %" PRId64
+					 ": %s", req->sector_num, strerror(-ret));
+		goto out;
+	}
+	qemu_vfree(req->buf);
+	req->s->in_flight--;
+	convert_fill_queue(req->s);
+out:
+	if (!req->s->ret) {
+		req->s->ret = ret;
+	}
+	free(req);
+}
+
+static void convert_fill_queue(ImgConvertState *s)
+{
+	while (s->sector_num < s->total_sectors &&
+	       !s->ret && s->in_flight < CONVERT_MAX_INFLIGHT) {
+		convert_req *req;
+		int n = convert_iteration_sectors(s, s->sector_num);
+		if (n < 0) {
+			if (!s->ret) {
+				s->ret = n;
+			}
+			return;
+		}
+		if (s->status == BLK_DATA) {
+			s->allocated_done += n;
+			qemu_progress_print(100.0 * s->allocated_done / s->allocated_sectors,
+								0);
+		}
+		
+		req = malloc(sizeof(convert_req));
+		if (!req) {
+			s->ret = -ENOMEM;
+			return;
+		}
+		req->s = s;
+		req->sector_num = s->sector_num;
+		req->nb_sectors = n;
+		req->buf = blk_blockalign(s->target, s->buf_sectors * BDRV_SECTOR_SIZE);
+		req->co = qemu_coroutine_create(convert_copy_co);
+		s->sector_num += n;
+		qemu_coroutine_enter(req->co, req);
+	}
 }
 
 static int convert_do_copy(ImgConvertState *s)
 {
-    uint8_t *buf = NULL;
-    int64_t sector_num, allocated_done;
     int ret;
     int n;
 
@@ -1441,13 +1546,12 @@ static int convert_do_copy(ImgConvertState *s)
         }
         s->buf_sectors = s->cluster_sectors;
     }
-    buf = blk_blockalign(s->target, s->buf_sectors * BDRV_SECTOR_SIZE);
 
     /* Calculate allocated sectors for progress */
     s->allocated_sectors = 0;
-    sector_num = 0;
-    while (sector_num < s->total_sectors) {
-        n = convert_iteration_sectors(s, sector_num);
+    s->sector_num = 0;
+    while (s->sector_num < s->total_sectors) {
+        n = convert_iteration_sectors(s, s->sector_num);
         if (n < 0) {
             ret = n;
             goto fail;
@@ -1455,45 +1559,23 @@ static int convert_do_copy(ImgConvertState *s)
         if (s->status == BLK_DATA) {
             s->allocated_sectors += n;
         }
-        sector_num += n;
+        s->sector_num += n;
     }
 
     /* Do the copy */
     s->src_cur = 0;
     s->src_cur_offset = 0;
     s->sector_next_status = 0;
+    s->sector_num = 0;
+    s->allocated_done = 0;
 
-    sector_num = 0;
-    allocated_done = 0;
+    convert_fill_queue(s);
 
-    while (sector_num < s->total_sectors) {
-        n = convert_iteration_sectors(s, sector_num);
-        if (n < 0) {
-            ret = n;
-            goto fail;
-        }
-        if (s->status == BLK_DATA) {
-            allocated_done += n;
-            qemu_progress_print(100.0 * allocated_done / s->allocated_sectors,
-                                0);
-        }
-
-        ret = convert_read(s, sector_num, n, buf);
-        if (ret < 0) {
-            error_report("error while reading sector %" PRId64
-                         ": %s", sector_num, strerror(-ret));
-            goto fail;
-        }
-
-        ret = convert_write(s, sector_num, n, buf);
-        if (ret < 0) {
-            error_report("error while writing sector %" PRId64
-                         ": %s", sector_num, strerror(-ret));
-            goto fail;
-        }
-
-        sector_num += n;
+    while (s->sector_num < s->total_sectors ||
+        s->in_flight) {
+        main_loop_wait(false);
     }
+    ret = s->ret;
 
     if (s->compressed) {
         /* signal EOF to align */
@@ -1505,7 +1587,6 @@ static int convert_do_copy(ImgConvertState *s)
 
     ret = 0;
 fail:
-    qemu_vfree(buf);
     return ret;
 }
 
