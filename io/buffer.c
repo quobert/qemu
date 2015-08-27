@@ -20,10 +20,13 @@
 
 #include "io/buffer.h"
 
+#define QIO_BUFFER_MIN_INIT_SIZE 4096
+
 void qio_buffer_reserve(QIOBuffer *buffer, size_t len)
 {
     if ((buffer->capacity - buffer->offset) < len) {
-        buffer->capacity += (len + 1024);
+        buffer->capacity = pow2ceil(buffer->offset + len);
+        buffer->capacity = MAX(buffer->capacity, QIO_BUFFER_MIN_INIT_SIZE);
         buffer->buffer = g_realloc(buffer->buffer, buffer->capacity);
     }
 }
