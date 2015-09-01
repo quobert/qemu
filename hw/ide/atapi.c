@@ -27,8 +27,6 @@
 #include "hw/scsi/scsi.h"
 #include "sysemu/block-backend.h"
 
-#define DEBUG_IDE_ATAPI 1
-
 static void ide_atapi_cmd_read_dma_cb(void *opaque, int ret);
 
 static void padstr8(uint8_t *buf, int buf_size, const char *src)
@@ -107,57 +105,6 @@ static void cd_data_to_raw(uint8_t *buf, int lba)
     memset(buf, 0, 288);
 }
 
-static void cd_read_sector_cb(void *opaque, int ret) {
-    IDEState *s = opaque;
-
-    block_acct_done(blk_get_stats(s->blk), &s->acct);
-
-    printf("cd_read_sector_cb lba %d ret = %d\n", s->lba, ret);
-
-    if (ret < 0) {
-        ide_atapi_io_error(s, ret);
-        return;
-    }
-
-    if (s->cd_sector_size == 2352) {
-        cd_data_to_raw(s->io_buffer, s->lba);
-    }
-
-    s->lba++;
-    s->io_buffer_index = 0;
-
-    ide_atapi_cmd_reply_end(s);
-}
-
-static BlockAIOCB *cd_read_sector(IDEState *s, int lba, void *buf, int sector_size)
-{
-    BlockAIOCB *aiocb = NULL;
-
-    if (sector_size != 2048 && sector_size != 2352) {
-        return NULL;
-    }
-
-    s->iov.iov_base = buf;
-    if (sector_size == 2352) {
-        buf += 4;
-    }
-
-    s->iov.iov_len = 4 * BDRV_SECTOR_SIZE;
-    qemu_iovec_init_external(&s->qiov, &s->iov, 1);
-
-    printf("cd_read_sector lba %d\n", lba);
-
-    aiocb = blk_aio_readv(s->blk, (int64_t)lba << 2, &s->qiov, 4,
-                          cd_read_sector_cb, s);
-
-    if (aiocb != NULL) {
-        block_acct_start(blk_get_stats(s->blk), &s->acct,
-                         4 * BDRV_SECTOR_SIZE, BLOCK_ACCT_READ);
-    }
-
-    return aiocb;
-}
-
 void ide_atapi_cmd_ok(IDEState *s)
 {
     s->error = 0;
@@ -193,34 +140,139 @@ void ide_atapi_io_error(IDEState *s, int ret)
     }
 }
 
+//#define IDE_SYNC
+
+#if defined(IDE_SYNC)
+static int cd_read_sector_sync(IDEState *s, int lba, uint8_t *buf, int sector_size)
+{
+    int ret;
+
+    switch(sector_size) {
+    case 2048:
+        block_acct_start(blk_get_stats(s->blk), &s->acct,
+                         4 * BDRV_SECTOR_SIZE, BLOCK_ACCT_READ);
+        ret = blk_read(s->blk, (int64_t)lba << 2, buf, 4);
+        block_acct_done(blk_get_stats(s->blk), &s->acct);
+        break;
+    case 2352:
+        block_acct_start(blk_get_stats(s->blk), &s->acct,
+                         4 * BDRV_SECTOR_SIZE, BLOCK_ACCT_READ);
+        ret = blk_read(s->blk, (int64_t)lba << 2, buf + 16, 4);
+        block_acct_done(blk_get_stats(s->blk), &s->acct);
+        if (ret < 0)
+            return ret;
+        cd_data_to_raw(buf, lba);
+        break;
+    default:
+        ret = -EIO;
+        break;
+    }
+    return ret;
+}
+#else
+static void cd_read_sector_cb(void *opaque, int ret) {
+    IDEState *s = opaque;
+
+    block_acct_done(blk_get_stats(s->blk), &s->acct);
+
+    printf("cd_read_sector_cb lba %d ret = %d\n", s->lba, ret);
+
+    if (ret < 0) {
+        ide_atapi_io_error(s, ret);
+        return;
+    }
+
+    if (s->cd_sector_size == 2352) {
+        cd_data_to_raw(s->io_buffer, s->lba);
+    }
+
+    s->lba++;
+    s->io_buffer_index = 0;
+    s->status &= ~BUSY_STAT;
+
+    ide_atapi_cmd_reply_end(s);
+}
+
+static BlockAIOCB *cd_read_sector(IDEState *s, int lba, void *buf, int sector_size)
+{
+    BlockAIOCB *aiocb = NULL;
+
+    if (sector_size != 2048 && sector_size != 2352) {
+        return NULL;
+    }
+
+    s->iov.iov_base = buf;
+    if (sector_size == 2352) {
+        buf += 4;
+    }
+
+    s->iov.iov_len = 4 * BDRV_SECTOR_SIZE;
+    qemu_iovec_init_external(&s->qiov, &s->iov, 1);
+
+    printf("cd_read_sector lba %d\n", lba);
+
+    aiocb = blk_aio_readv(s->blk, (int64_t)lba << 2, &s->qiov, 4,
+                          cd_read_sector_cb, s);
+
+    if (aiocb != NULL) {
+        block_acct_start(blk_get_stats(s->blk), &s->acct,
+                         4 * BDRV_SECTOR_SIZE, BLOCK_ACCT_READ);
+    }
+
+    return aiocb;
+}
+#endif
+
+
 /* The whole ATAPI transfer logic is handled in this function */
 void ide_atapi_cmd_reply_end(IDEState *s)
 {
-    int byte_count_limit, size;
+    int byte_count_limit, size, ret=-1;
 #ifdef DEBUG_IDE_ATAPI
-    printf("reply: tx_size=%d elem_tx_size=%d index=%d\n",
+    printf("ide_atapi_cmd_reply_end: tx_size=%d elem_tx_size=%d index=%d packet_transfer_size %d\n",
            s->packet_transfer_size,
            s->elementary_transfer_size,
-           s->io_buffer_index);
+           s->io_buffer_index,
+           s->packet_transfer_size);
 #endif
     if (s->packet_transfer_size <= 0) {
+		printf("eot ret=%d\n",ret);
         /* end of transfer */
         ide_atapi_cmd_ok(s);
         ide_set_irq(s->bus);
 #ifdef DEBUG_IDE_ATAPI
         printf("status=0x%x\n", s->status);
 #endif
+        //abort();
     } else {
         /* see if a new sector must be read */
         if (s->lba != -1 && s->io_buffer_index >= s->cd_sector_size) {
+#if !defined(IDE_SYNC)
+            s->status |= BUSY_STAT;
             if (cd_read_sector(s, s->lba, s->io_buffer, s->cd_sector_size) == NULL) {
                 ide_atapi_io_error(s, -EIO);
             }
+            printf("aiocb ok\n");
             return;
+#else
+            ret = cd_read_sector_sync(s, s->lba, s->io_buffer, s->cd_sector_size);
+            if (ret < 0) {
+                ide_atapi_io_error(s, ret);
+                return;
+            }
+            s->lba++;
+            s->io_buffer_index = 0;
+    printf("ide_atapi_cmd_reply_end: tx_size=%d elem_tx_size=%d index=%d packet_transfer_size %d\n",
+           s->packet_transfer_size,
+           s->elementary_transfer_size,
+           s->io_buffer_index,
+           s->packet_transfer_size);
+#endif
         }
         if (s->elementary_transfer_size > 0) {
             /* there are some data left to transmit in this elementary
                transfer */
+            printf("elementary\n");
             size = s->cd_sector_size - s->io_buffer_index;
             if (size > s->elementary_transfer_size)
                 size = s->elementary_transfer_size;
@@ -297,8 +349,8 @@ static void ide_atapi_cmd_read_pio(IDEState *s, int lba, int nb_sectors,
     s->elementary_transfer_size = 0;
     s->io_buffer_index = sector_size;
     s->cd_sector_size = sector_size;
+    //s->status = READY_STAT | SEEK_STAT;
 
-    s->status = READY_STAT | SEEK_STAT;
     ide_atapi_cmd_reply_end(s);
 }
 
