@@ -22,6 +22,15 @@
 
 #define QIO_BUFFER_MIN_INIT_SIZE 4096
 
+void qio_buffer_init(QIOBuffer *buffer, const char *name, ...)
+{
+    va_list ap;
+
+    va_start(ap, name);
+    buffer->name = g_strdup_vprintf(name, ap);
+    va_end(ap);
+}
+
 void qio_buffer_reserve(QIOBuffer *buffer, size_t len)
 {
     if ((buffer->capacity - buffer->offset) < len) {
@@ -49,9 +58,11 @@ void qio_buffer_reset(QIOBuffer *buffer)
 void qio_buffer_free(QIOBuffer *buffer)
 {
     g_free(buffer->buffer);
+    g_free(buffer->name);
     buffer->offset = 0;
     buffer->capacity = 0;
     buffer->buffer = NULL;
+    buffer->name = NULL;
 }
 
 void qio_buffer_append(QIOBuffer *buffer, const void *data, size_t len)
