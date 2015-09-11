@@ -1377,6 +1377,12 @@ spapr_iommu_new_table(uint64_t liobn, void *tcet, void *table, int fd) "liobn=%"
 # hw/ppc/ppc.c
 ppc_tb_adjust(uint64_t offs1, uint64_t offs2, int64_t diff, int64_t seconds) "adjusted from 0x%"PRIx64" to 0x%"PRIx64", diff %"PRId64" (%"PRId64"s)"
 
+# io/buffer.c
+qio_buffer_resize(const char *buf, size_t olen, size_t len) "%s: old %zd, new %zd"
+qio_buffer_move_empty(const char *buf, size_t len, const char *from) "%s: %zd bytes from %s"
+qio_buffer_move(const char *buf, size_t len, const char *from) "%s: %zd bytes from %s"
+qio_buffer_free(const char *buf, size_t len) "%s: capacity %zd"
+
 # util/hbitmap.c
 hbitmap_iter_skip_words(const void *hb, void *hbi, uint64_t pos, unsigned long cur) "hb %p hbi %p pos %"PRId64" cur 0x%lx"
 hbitmap_reset(void *hb, uint64_t start, uint64_t count, uint64_t sbit, uint64_t ebit) "hb %p items %"PRIu64",%"PRIu64" bits %"PRIu64"..%"PRIu64
