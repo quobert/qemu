@@ -137,4 +137,14 @@ gboolean qio_buffer_empty(QIOBuffer *buffer);
  */
 void qio_buffer_move_empty(QIOBuffer *to, QIOBuffer *from);
 
+/**
+ * qio_buffer_move:
+ * @to: destination buffer object
+ * @from: source buffer object
+ *
+ * Moves buffer, copying data (unless 'to' buffer happens to be empty).
+ * 'from' buffer is empty and zero-sized on return.
+ */
+void qio_buffer_move(QIOBuffer *to, QIOBuffer *from);
+
 #endif /* QIO_BUFFER_H__ */
