@@ -34,10 +34,22 @@ typedef struct QIOBuffer QIOBuffer;
  */
 
 struct QIOBuffer {
+    char *name;
     size_t capacity;
     size_t offset;
     uint8_t *buffer;
 };
+
+/**
+ * qio_buffer_init:
+ * @buffer: the buffer object
+ * @name: buffer name
+ *
+ * Optionally attach a name to the buffer, to make it easier
+ * to identify in debug traces.
+ */
+void qio_buffer_init(QIOBuffer *buffer, const char *name, ...)
+        GCC_FMT_ATTR(2, 3);
 
 /**
  * qio_buffer_reserve:
