@@ -218,6 +218,8 @@ static int vnc_worker_thread_loop(VncJobQueue *queue)
     int n_rectangles;
     int saved_offset;
 
+    qio_buffer_init(&vs.output, "vnc-worker-output");
+
     vnc_lock_queue(queue);
     while (QTAILQ_EMPTY(&queue->jobs) && !queue->exit) {
         qemu_cond_wait(&queue->cond, &queue->mutex);
@@ -303,6 +305,7 @@ static VncJobQueue *vnc_queue_init(void)
 
     qemu_cond_init(&queue->cond);
     qemu_mutex_init(&queue->mutex);
+    qio_buffer_init(&queue->buffer, "vnc-job-queue");
     QTAILQ_INIT(&queue->jobs);
     return queue;
 }
