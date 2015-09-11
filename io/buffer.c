@@ -77,3 +77,17 @@ void qio_buffer_advance(QIOBuffer *buffer, size_t len)
             (buffer->offset - len));
     buffer->offset -= len;
 }
+
+void qio_buffer_move_empty(QIOBuffer *to, QIOBuffer *from)
+{
+    assert(to->offset == 0);
+
+    g_free(to->buffer);
+    to->offset = from->offset;
+    to->capacity = from->capacity;
+    to->buffer = from->buffer;
+
+    from->offset = 0;
+    from->capacity = 0;
+    from->buffer = NULL;
+}
