@@ -127,4 +127,14 @@ uint8_t *qio_buffer_end(QIOBuffer *buffer);
  */
 gboolean qio_buffer_empty(QIOBuffer *buffer);
 
+/**
+ * qio_buffer_move_empty:
+ * @to: destination buffer object
+ * @from: source buffer object
+ *
+ * Moves buffer, without copying data.  'to' buffer must be empty.
+ * 'from' buffer is empty and zero-sized on return.
+ */
+void qio_buffer_move_empty(QIOBuffer *to, QIOBuffer *from);
+
 #endif /* QIO_BUFFER_H__ */
