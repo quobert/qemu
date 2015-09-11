@@ -91,3 +91,19 @@ void qio_buffer_move_empty(QIOBuffer *to, QIOBuffer *from)
     from->capacity = 0;
     from->buffer = NULL;
 }
+
+void qio_buffer_move(QIOBuffer *to, QIOBuffer *from)
+{
+    if (to->offset == 0) {
+        qio_buffer_move_empty(to, from);
+        return;
+    }
+
+    qio_buffer_reserve(to, from->offset);
+    qio_buffer_append(to, from->buffer, from->offset);
+
+    g_free(from->buffer);
+    from->offset = 0;
+    from->capacity = 0;
+    from->buffer = NULL;
+}
