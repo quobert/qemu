@@ -561,6 +561,59 @@ static bool ide_sect_range_ok(IDEState *s,
     return true;
 }
 
+static void ide_readv_cancelable_cb(void *opaque, int ret)
+{
+    IDECancelableRequest *req = opaque;
+    if (!req->canceled) {
+        if (!ret) {
+            qemu_iovec_from_buf(req->org_qiov, 0, req->buf, req->org_qiov->size);
+        }
+        req->org_cb(req->org_opaque, ret);
+    }
+    QLIST_REMOVE(req, list);
+    qemu_vfree(req->buf);
+    qemu_iovec_destroy(&req->qiov);
+    g_free(req);
+}
+
+#define MAX_CANCELABLE_REQS 16
+
+BlockAIOCB *ide_readv_cancelable(IDEState *s, int64_t sector_num,
+                                 QEMUIOVector *iov, int nb_sectors,
+                                 BlockCompletionFunc *cb, void *opaque)
+{
+    BlockAIOCB *aioreq;
+    IDECancelableRequest *req;
+    int c = 0;
+
+    QLIST_FOREACH(req, &s->cancelable_requests, list) {
+        c++;
+    }
+    if (c > MAX_CANCELABLE_REQS) {
+        return NULL;
+    }
+
+    req = g_new0(IDECancelableRequest, 1);
+    qemu_iovec_init(&req->qiov, 1);
+    req->buf = qemu_blockalign(blk_bs(s->blk), iov->size);
+    qemu_iovec_add(&req->qiov, req->buf, iov->size);
+    req->org_qiov = iov;
+    req->org_cb = cb;
+    req->org_opaque = opaque;
+
+    aioreq = blk_aio_readv(s->blk, sector_num, &req->qiov, nb_sectors,
+                           ide_readv_cancelable_cb, req);
+    if (aioreq == NULL) {
+        qemu_vfree(req->buf);
+        qemu_iovec_destroy(&req->qiov);
+        g_free(req);
+    } else {
+        QLIST_INSERT_HEAD(&s->cancelable_requests, req, list);
+    }
+
+    return aioreq;
+}
+
 static void ide_sector_read(IDEState *s);
 
 static void ide_sector_read_cb(void *opaque, int ret)
@@ -805,6 +858,7 @@ void ide_start_dma(IDEState *s, BlockCompletionFunc *cb)
     s->bus->retry_unit = s->unit;
     s->bus->retry_sector_num = ide_get_sector(s);
     s->bus->retry_nsector = s->nsector;
+    s->bus->s = s;
     if (s->bus->dma->ops->start_dma) {
         s->bus->dma->ops->start_dma(s->bus->dma, s, cb);
     }
