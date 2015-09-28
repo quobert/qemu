@@ -20,7 +20,8 @@
 
 #include "io/buffer.h"
 
-#define QIO_BUFFER_MIN_INIT_SIZE 4096
+#define QIO_BUFFER_MIN_INIT_SIZE     4096
+#define QIO_BUFFER_MIN_SHRINK_SIZE  65536
 
 void qio_buffer_init(QIOBuffer *buffer, const char *name, ...)
 {
@@ -29,6 +30,23 @@ void qio_buffer_init(QIOBuffer *buffer, const char *name, ...)
     va_start(ap, name);
     buffer->name = g_strdup_vprintf(name, ap);
     va_end(ap);
+}
+
+void qio_buffer_shrink(QIOBuffer *buffer)
+{
+    /*
+     * Only shrink in case the used size is *much* smaller than the
+     * capacity, to avoid bumping up & down the buffers all the time.
+     * realloc() isn't exactly cheap ...
+     */
+    if (buffer->offset < (buffer->capacity >> 3) &&
+        buffer->capacity > QIO_BUFFER_MIN_SHRINK_SIZE) {
+        return;
+    }
+
+    buffer->capacity = pow2ceil(buffer->offset);
+    buffer->capacity = MAX(buffer->capacity, QIO_BUFFER_MIN_SHRINK_SIZE);
+    buffer->buffer = g_realloc(buffer->buffer, buffer->capacity);
 }
 
 void qio_buffer_reserve(QIOBuffer *buffer, size_t len)
