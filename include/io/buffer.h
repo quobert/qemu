@@ -52,6 +52,16 @@ void qio_buffer_init(QIOBuffer *buffer, const char *name, ...)
         GCC_FMT_ATTR(2, 3);
 
 /**
+ * qio_buffer_shrink:
+ * @buffer: the buffer object
+ *
+ * Try to shrink the buffer.  Checks current buffer capacity and size
+ * and reduces capacity in case only a fraction of the buffer is
+ * actually used.
+ */
+void qio_buffer_shrink(QIOBuffer *buffer);
+
+/**
  * qio_buffer_reserve:
  * @buffer: the buffer object
  * @len: the minimum required free space
