@@ -721,6 +721,10 @@ static void vnc_update_server_surface(VncDisplay *vd)
     qemu_pixman_image_unref(vd->server);
     vd->server = NULL;
 
+    if (QTAILQ_EMPTY(&vd->clients)) {
+        return;
+    }
+
     vd->server = pixman_image_create_bits(VNC_SERVER_FB_FORMAT,
                                           vnc_width(vd),
                                           vnc_height(vd),
@@ -1231,6 +1235,10 @@ void vnc_disconnect_finish(VncState *vs)
     if (vs->initialized) {
         QTAILQ_REMOVE(&vs->vd->clients, vs, next);
         qemu_remove_mouse_mode_change_notifier(&vs->mouse_mode_notifier);
+        if (QTAILQ_EMPTY(&vs->vd->clients)) {
+            /* last client gone */
+            vnc_update_server_surface(vs->vd);
+        }
     }
 
     if (vs->vd->lock_key_sync)
@@ -3069,6 +3077,7 @@ void vnc_init_state(VncState *vs)
 {
     vs->initialized = true;
     VncDisplay *vd = vs->vd;
+    bool first_client = QTAILQ_EMPTY(&vd->clients);
 
     vs->last_x = -1;
     vs->last_y = -1;
@@ -3082,6 +3091,9 @@ void vnc_init_state(VncState *vs)
     vs->bh = qemu_bh_new(vnc_jobs_bh, vs);
 
     QTAILQ_INSERT_TAIL(&vd->clients, vs, next);
+    if (first_client) {
+        vnc_update_server_surface(vd);
+    }
 
     graphic_hw_update(vd->dcl.con);
 
