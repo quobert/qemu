@@ -185,6 +185,10 @@ void vnc_jobs_consume_buffer(VncState *vs)
  */
 static void vnc_async_encoding_start(VncState *orig, VncState *local)
 {
+    memset(local, 0, sizeof(*local));
+    qio_buffer_init(&local->output, "vnc-worker-output");
+    local->csock = -1; /* Don't do any network work on this thread */
+
     local->vnc_encoding = orig->vnc_encoding;
     local->features = orig->features;
     local->vd = orig->vd;
@@ -196,7 +200,6 @@ static void vnc_async_encoding_start(VncState *orig, VncState *local)
     local->zlib = orig->zlib;
     local->hextile = orig->hextile;
     local->zrle = orig->zrle;
-    local->csock = -1; /* Don't do any network work on this thread */
 }
 
 static void vnc_async_encoding_end(VncState *orig, VncState *local)
@@ -215,8 +218,6 @@ static int vnc_worker_thread_loop(VncJobQueue *queue)
     VncState vs;
     int n_rectangles;
     int saved_offset;
-
-    qio_buffer_init(&vs.output, "vnc-worker-output");
 
     vnc_lock_queue(queue);
     while (QTAILQ_EMPTY(&queue->jobs) && !queue->exit) {
