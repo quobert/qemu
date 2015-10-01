@@ -185,7 +185,6 @@ void vnc_jobs_consume_buffer(VncState *vs)
  */
 static void vnc_async_encoding_start(VncState *orig, VncState *local)
 {
-    memset(local, 0, sizeof(*local));
     qio_buffer_init(&local->output, "vnc-worker-output");
     local->csock = -1; /* Don't do any network work on this thread */
 
@@ -215,7 +214,7 @@ static int vnc_worker_thread_loop(VncJobQueue *queue)
 {
     VncJob *job;
     VncRectEntry *entry, *tmp;
-    VncState vs;
+    VncState vs = {};
     int n_rectangles;
     int saved_offset;
 
@@ -235,6 +234,9 @@ static int vnc_worker_thread_loop(VncJobQueue *queue)
     if (job->vs->csock == -1 || job->vs->abort == true) {
         vnc_unlock_output(job->vs);
         goto disconnected;
+    }
+    if (qio_buffer_empty(&job->vs->output)) {
+        qio_buffer_move_empty(&vs.output, &job->vs->output);
     }
     vnc_unlock_output(job->vs);
 
