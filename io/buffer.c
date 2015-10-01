@@ -23,6 +23,7 @@
 
 #define QIO_BUFFER_MIN_INIT_SIZE     4096
 #define QIO_BUFFER_MIN_SHRINK_SIZE  65536
+#define QIO_BUFFER_AVG_SIZE_SHIFT       7
 
 void qio_buffer_init(QIOBuffer *buffer, const char *name, ...)
 {
@@ -33,39 +34,44 @@ void qio_buffer_init(QIOBuffer *buffer, const char *name, ...)
     va_end(ap);
 }
 
-void qio_buffer_shrink(QIOBuffer *buffer)
+static size_t buf_req_size(QIOBuffer *buffer, size_t len)
 {
-    size_t old;
+    return MAX(QIO_BUFFER_MIN_INIT_SIZE,
+                pow2ceil(buffer->offset + len));
+}
 
-    /*
-     * Only shrink in case the used size is *much* smaller than the
-     * capacity, to avoid bumping up & down the buffers all the time.
-     * realloc() isn't exactly cheap ...
-     */
-    if (buffer->offset < (buffer->capacity >> 3) &&
-        buffer->capacity > QIO_BUFFER_MIN_SHRINK_SIZE) {
-        return;
-    }
-
-    old = buffer->capacity;
-    buffer->capacity = pow2ceil(buffer->offset);
-    buffer->capacity = MAX(buffer->capacity, QIO_BUFFER_MIN_SHRINK_SIZE);
+static void buf_adj_size(QIOBuffer *buffer, size_t len)
+{
+    size_t old = buffer->capacity;
+    buffer->capacity = buf_req_size(buffer, len);
     buffer->buffer = g_realloc(buffer->buffer, buffer->capacity);
     trace_qio_buffer_resize(buffer->name ?: "unnamed",
                             old, buffer->capacity);
+    buffer->avg_size = MAX(buffer->avg_size,
+                           buffer->capacity << QIO_BUFFER_AVG_SIZE_SHIFT);
+}
+
+void qio_buffer_shrink(QIOBuffer *buffer)
+{
+    /* Only shrink if the average size of the buffer is much too big,
+     * to avoid bumping up & down the buffers all the time.
+     * realloc() isn't exactly cheap ...
+     */
+    buffer->avg_size *= (1 << QIO_BUFFER_AVG_SIZE_SHIFT) - 1;
+    buffer->avg_size >>= QIO_BUFFER_AVG_SIZE_SHIFT;
+    buffer->avg_size += buf_req_size(buffer, 0);
+
+    if (buffer->avg_size >> QIO_BUFFER_AVG_SIZE_SHIFT < buffer->capacity >> 3 &&
+        buffer->avg_size >> QIO_BUFFER_AVG_SIZE_SHIFT > QIO_BUFFER_MIN_SHRINK_SIZE &&
+        buf_req_size(buffer, buffer->avg_size >> QIO_BUFFER_AVG_SIZE_SHIFT) != buffer->capacity) {
+        buf_adj_size(buffer, buffer->avg_size >> QIO_BUFFER_AVG_SIZE_SHIFT);
+    }
 }
 
 void qio_buffer_reserve(QIOBuffer *buffer, size_t len)
 {
-    size_t old;
-
     if ((buffer->capacity - buffer->offset) < len) {
-        old = buffer->capacity;
-        buffer->capacity = pow2ceil(buffer->offset + len);
-        buffer->capacity = MAX(buffer->capacity, QIO_BUFFER_MIN_INIT_SIZE);
-        buffer->buffer = g_realloc(buffer->buffer, buffer->capacity);
-        trace_qio_buffer_resize(buffer->name ?: "unnamed",
-                                old, buffer->capacity);
+        buf_adj_size(buffer, len);
     }
 }
 
@@ -82,6 +88,7 @@ uint8_t *qio_buffer_end(QIOBuffer *buffer)
 void qio_buffer_reset(QIOBuffer *buffer)
 {
     buffer->offset = 0;
+    qio_buffer_shrink(buffer);
 }
 
 void qio_buffer_free(QIOBuffer *buffer)
@@ -106,6 +113,7 @@ void qio_buffer_advance(QIOBuffer *buffer, size_t len)
     memmove(buffer->buffer, buffer->buffer + len,
             (buffer->offset - len));
     buffer->offset -= len;
+    qio_buffer_shrink(buffer);
 }
 
 void qio_buffer_move_empty(QIOBuffer *to, QIOBuffer *from)

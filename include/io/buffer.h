@@ -37,6 +37,7 @@ struct QIOBuffer {
     char *name;
     size_t capacity;
     size_t offset;
+    uint64_t avg_size;
     uint8_t *buffer;
 };
 
