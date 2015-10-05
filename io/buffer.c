@@ -24,6 +24,13 @@
 #define QIO_BUFFER_MIN_INIT_SIZE     4096
 #define QIO_BUFFER_MIN_SHRINK_SIZE  65536
 
+static size_t buf_req_size(QIOBuffer *buffer, size_t len)
+{
+    return MAX(QIO_BUFFER_MIN_INIT_SIZE,
+               pow2ceil(buffer->offset + len));
+}
+
+
 void qio_buffer_init(QIOBuffer *buffer, const char *name, ...)
 {
     va_list ap;
@@ -61,8 +68,7 @@ void qio_buffer_reserve(QIOBuffer *buffer, size_t len)
 
     if ((buffer->capacity - buffer->offset) < len) {
         old = buffer->capacity;
-        buffer->capacity = pow2ceil(buffer->offset + len);
-        buffer->capacity = MAX(buffer->capacity, QIO_BUFFER_MIN_INIT_SIZE);
+        buffer->capacity = buf_req_size(buffer, len);
         buffer->buffer = g_realloc(buffer->buffer, buffer->capacity);
         trace_qio_buffer_resize(buffer->name ?: "unnamed",
                                 old, buffer->capacity);
