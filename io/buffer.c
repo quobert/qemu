@@ -30,6 +30,14 @@ static size_t buf_req_size(QIOBuffer *buffer, size_t len)
                pow2ceil(buffer->offset + len));
 }
 
+static void buf_adj_size(QIOBuffer *buffer, size_t len)
+{
+    size_t old = buffer->capacity;
+    buffer->capacity = buf_req_size(buffer, len);
+    buffer->buffer = g_realloc(buffer->buffer, buffer->capacity);
+    trace_qio_buffer_resize(buffer->name ?: "unnamed",
+                            old, buffer->capacity);
+}
 
 void qio_buffer_init(QIOBuffer *buffer, const char *name, ...)
 {
@@ -42,8 +50,6 @@ void qio_buffer_init(QIOBuffer *buffer, const char *name, ...)
 
 void qio_buffer_shrink(QIOBuffer *buffer)
 {
-    size_t old;
-
     /*
      * Only shrink in case the used size is *much* smaller than the
      * capacity, to avoid bumping up & down the buffers all the time.
@@ -54,24 +60,13 @@ void qio_buffer_shrink(QIOBuffer *buffer)
         return;
     }
 
-    old = buffer->capacity;
-    buffer->capacity = pow2ceil(buffer->offset);
-    buffer->capacity = MAX(buffer->capacity, QIO_BUFFER_MIN_SHRINK_SIZE);
-    buffer->buffer = g_realloc(buffer->buffer, buffer->capacity);
-    trace_qio_buffer_resize(buffer->name ?: "unnamed",
-                            old, buffer->capacity);
+    buf_adj_size(buffer, 0);
 }
 
 void qio_buffer_reserve(QIOBuffer *buffer, size_t len)
 {
-    size_t old;
-
     if ((buffer->capacity - buffer->offset) < len) {
-        old = buffer->capacity;
-        buffer->capacity = buf_req_size(buffer, len);
-        buffer->buffer = g_realloc(buffer->buffer, buffer->capacity);
-        trace_qio_buffer_resize(buffer->name ?: "unnamed",
-                                old, buffer->capacity);
+        buf_adj_size(buffer, len);
     }
 }
 
