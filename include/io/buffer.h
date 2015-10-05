@@ -39,6 +39,8 @@ struct QIOBuffer {
     size_t offset;
     uint64_t avg_size;
     uint8_t *buffer;
+    size_t base_offs;
+    uint8_t *base_ptr;
 };
 
 /**

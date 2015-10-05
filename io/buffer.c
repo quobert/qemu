@@ -21,24 +21,27 @@
 #include "io/buffer.h"
 #include "trace.h"
 
-#define QIO_BUFFER_MIN_INIT_SIZE     4096
-#define QIO_BUFFER_MIN_SHRINK_SIZE  65536
+#define QIO_BUFFER_MIN_INIT_SIZE        4096
+#define QIO_BUFFER_MIN_SHRINK_SIZE     65536
+#define QIO_BUFFER_MAX_WASTED_SIZE   1048576
 /* define the factor alpha for the expentional smoothing
  * that is used in the average size calculation. a shift
  * of 7 results in an alpha of 1/2^7. */
-#define QIO_BUFFER_AVG_SIZE_SHIFT       7
+#define QIO_BUFFER_AVG_SIZE_SHIFT          7
 
 static size_t buf_req_size(QIOBuffer *buffer, size_t len)
 {
     return MAX(QIO_BUFFER_MIN_INIT_SIZE,
-               pow2ceil(buffer->offset + len));
+               pow2ceil(buffer->base_offs + buffer->offset + len));
 }
 
 static void buf_adj_size(QIOBuffer *buffer, size_t len)
 {
     size_t old = buffer->capacity;
     buffer->capacity = buf_req_size(buffer, len);
-    buffer->buffer = g_realloc(buffer->buffer, buffer->capacity);
+    buffer->base_ptr = g_realloc(buffer->base_ptr, buffer->capacity);
+    buffer->buffer = buffer->base_ptr + buffer->base_offs;
+
     trace_qio_buffer_resize(buffer->name ?: "unnamed",
                             old, buffer->capacity);
 
@@ -105,17 +108,21 @@ uint8_t *qio_buffer_end(QIOBuffer *buffer)
 void qio_buffer_reset(QIOBuffer *buffer)
 {
     buffer->offset = 0;
+    buffer->base_offs = 0;
+    buffer->buffer = buffer->base_ptr;
     qio_buffer_shrink(buffer);
 }
 
 void qio_buffer_free(QIOBuffer *buffer)
 {
     trace_qio_buffer_free(buffer->name ?: "unnamed", buffer->capacity);
-    g_free(buffer->buffer);
+    g_free(buffer->base_ptr);
     g_free(buffer->name);
     buffer->offset = 0;
+    buffer->base_offs = 0;
     buffer->capacity = 0;
     buffer->buffer = NULL;
+    buffer->base_ptr = NULL;
     buffer->name = NULL;
 }
 
@@ -127,10 +134,18 @@ void qio_buffer_append(QIOBuffer *buffer, const void *data, size_t len)
 
 void qio_buffer_advance(QIOBuffer *buffer, size_t len)
 {
-    memmove(buffer->buffer, buffer->buffer + len,
-            (buffer->offset - len));
+    if (buffer->offset - len == 0) {
+        return qio_buffer_reset(buffer);
+    }
+    buffer->buffer += len;
+    buffer->base_offs += len;
     buffer->offset -= len;
-    qio_buffer_shrink(buffer);
+    if (buffer->base_offs > QIO_BUFFER_MAX_WASTED_SIZE) {
+        memmove(buffer->base_ptr, buffer->buffer, buffer->offset);
+        buffer->buffer = buffer->base_ptr;
+        buffer->base_offs = 0;
+        qio_buffer_shrink(buffer);
+    }
 }
 
 void qio_buffer_move_empty(QIOBuffer *to, QIOBuffer *from)
@@ -140,14 +155,18 @@ void qio_buffer_move_empty(QIOBuffer *to, QIOBuffer *from)
                                 from->name ?: "unnamed");
     assert(to->offset == 0);
 
-    g_free(to->buffer);
+    g_free(to->base_ptr);
     to->offset = from->offset;
     to->capacity = from->capacity;
     to->buffer = from->buffer;
+    to->base_offs = from->base_offs;
+    to->base_ptr = from->base_ptr;
 
     from->offset = 0;
     from->capacity = 0;
     from->buffer = NULL;
+    from->base_offs = 0;
+    from->base_ptr = NULL;
 }
 
 void qio_buffer_move(QIOBuffer *to, QIOBuffer *from)
@@ -164,8 +183,10 @@ void qio_buffer_move(QIOBuffer *to, QIOBuffer *from)
     qio_buffer_reserve(to, from->offset);
     qio_buffer_append(to, from->buffer, from->offset);
 
-    g_free(from->buffer);
+    g_free(from->base_ptr);
     from->offset = 0;
     from->capacity = 0;
     from->buffer = NULL;
+    from->base_offs = 0;
+    from->base_ptr = NULL;
 }
