@@ -1230,7 +1230,7 @@ typedef struct ImgConvertState {
     int64_t src_cur_offset;
     int64_t total_sectors;
     int64_t allocated_sectors;
-    int64_t sector_num;
+    int64_t sector_num, out_num;
     int64_t allocated_done;
     enum ImgConvertBlockStatus status;
     int64_t sector_next_status;
@@ -1273,7 +1273,6 @@ static int convert_iteration_sectors(ImgConvertState *s, int64_t sector_num)
         ret = bdrv_get_block_status(blk_bs(s->src[s->src_cur]),
                                     sector_num - s->src_cur_offset,
                                     n, &n);
-        printf("get_blk_status total %ld sector_num %ld left %ld n %d\n", s->total_sectors, sector_num, s->total_sectors - sector_num, n);
         if (ret < 0) {
             return ret;
         }
@@ -1460,9 +1459,7 @@ static void convert_copy_co(void *opaque)
 	convert_req *req = opaque;
 	int ret;
 	req->s->in_flight++;
-	printf("r");
 	ret = convert_read_co(req);
-	printf("R");
 	if (ret < 0) {
 		error_report("error while reading sector %" PRId64
 					 ": %s", req->sector_num, strerror(-ret));
@@ -1470,9 +1467,12 @@ static void convert_copy_co(void *opaque)
 	}
 
     //XXX: we might need to ensure writes are in order.
-    printf ("w");
+    //~ while (req->s->out_num < req->sector_num) {
+		//~ printf("wait %ld < %ld\n", req->s->out_num, req->sector_num);
+		//~ qemu_coroutine_yield();
+	//~ }
+    
 	ret = convert_write_co(req);
-	printf ("W");
 	if (ret < 0) {
 		error_report("error while writing sector %" PRId64
 					 ": %s", req->sector_num, strerror(-ret));
@@ -1480,6 +1480,7 @@ static void convert_copy_co(void *opaque)
 	}
 	qemu_vfree(req->buf);
 	req->s->in_flight--;
+	req->s->out_num = req->sector_num + req->nb_sectors;
 	//convert_fill_queue(req->s);
 out:
 	if (!req->s->ret) {
@@ -1494,9 +1495,7 @@ static void convert_fill_queue(ImgConvertState *s)
 	while (s->sector_num < s->total_sectors &&
 	       !s->ret && s->in_flight < CONVERT_MAX_INFLIGHT) {
 		convert_req *req;
-		printf("before convert iterate sectors: sector_num %ld\n", s->sector_num);
 		int n = convert_iteration_sectors(s, s->sector_num);
-		printf("after convert iterate sectors: sector_num %ld n %d status %d\n", s->sector_num, n, s->status);
 		if (n < 0) {
 			if (!s->ret) {
 				s->ret = n;
