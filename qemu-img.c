@@ -1221,7 +1221,7 @@ enum ImgConvertBlockStatus {
     BLK_BACKING_FILE,
 };
 
-#define CONVERT_MAX_INFLIGHT 4
+#define CONVERT_MAX_INFLIGHT 2
 
 typedef struct ImgConvertState {
     BlockBackend **src;
@@ -1317,6 +1317,7 @@ static int convert_iteration_sectors(ImgConvertState *s, int64_t sector_num)
 
 typedef struct convert_req {
     Coroutine *co;
+    QEMUBH *bh;
     ImgConvertState *s;
     int64_t sector_num;
     int nb_sectors;
@@ -1387,7 +1388,7 @@ static int convert_write_co(void *opaque)
     while (nb_sectors > 0) {
         int n = nb_sectors;
 
-        switch (s->status) {
+        switch (req->status) {
         case BLK_BACKING_FILE:
             /* If we have a backing file, leave clusters unallocated that are
              * unallocated in the source image, so that the backing file is
@@ -1454,6 +1455,13 @@ static int convert_write_co(void *opaque)
 
 static void convert_fill_queue(ImgConvertState *s);
 
+static void convert_copy_wakeup_bh(void *opaque)
+{
+	convert_req *req = opaque;
+	qemu_bh_delete(req->bh);
+	qemu_coroutine_enter(req->co, NULL);
+}
+
 static void convert_copy_co(void *opaque)
 {
 	convert_req *req = opaque;
@@ -1466,12 +1474,13 @@ static void convert_copy_co(void *opaque)
 		goto out;
 	}
 
-    //XXX: we might need to ensure writes are in order.
-    //~ while (req->s->out_num < req->sector_num) {
-		//~ printf("wait %ld < %ld\n", req->s->out_num, req->sector_num);
-		//~ qemu_coroutine_yield();
-	//~ }
-    
+    while (req->s->out_num != req->sector_num) {
+		req->bh = qemu_bh_new(convert_copy_wakeup_bh, req);
+		qemu_bh_schedule(req->bh);
+		qemu_coroutine_yield();
+	}
+
+	req->s->in_flight--;
 	ret = convert_write_co(req);
 	if (ret < 0) {
 		error_report("error while writing sector %" PRId64
@@ -1479,15 +1488,11 @@ static void convert_copy_co(void *opaque)
 		goto out;
 	}
 	qemu_vfree(req->buf);
-	req->s->in_flight--;
 	req->s->out_num = req->sector_num + req->nb_sectors;
-	//convert_fill_queue(req->s);
 out:
 	if (!req->s->ret) {
 		req->s->ret = ret;
 	}
-	//~ req->bh = qemu_bh_new(convert_copy_co_bh, req);
-	//~ qemu_bh_schedule(req->bh);
 }
 
 static void convert_fill_queue(ImgConvertState *s)
