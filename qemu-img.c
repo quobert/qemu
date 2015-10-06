@@ -1221,7 +1221,7 @@ enum ImgConvertBlockStatus {
     BLK_BACKING_FILE,
 };
 
-#define CONVERT_MAX_INFLIGHT 4
+#define CONVERT_MAX_INFLIGHT 2
 
 typedef struct ImgConvertState {
     BlockBackend **src;
@@ -1248,7 +1248,10 @@ typedef struct ImgConvertState {
 
 static void convert_select_part(ImgConvertState *s, int64_t sector_num)
 {
-    assert(sector_num >= s->src_cur_offset);
+    if (sector_num < s->src_cur_offset) {
+        s->src_cur = 0;
+        s->src_cur_offset = 0;
+    }
     while (sector_num - s->src_cur_offset >= s->src_sectors[s->src_cur]) {
         s->src_cur_offset += s->src_sectors[s->src_cur];
         s->src_cur++;
@@ -1319,6 +1322,7 @@ typedef struct convert_req {
     int64_t sector_num;
     int nb_sectors;
     uint8_t *buf;
+    enum ImgConvertBlockStatus status;
 } convert_req;
 
 static int convert_read_co(void *opaque)
@@ -1332,7 +1336,7 @@ static int convert_read_co(void *opaque)
     int ret;
     QEMUIOVector qiov;
 
-    if (s->status == BLK_ZERO || s->status == BLK_BACKING_FILE) {
+    if (req->status == BLK_ZERO || req->status == BLK_BACKING_FILE) {
         return 0;
     }
 
@@ -1508,6 +1512,7 @@ static void convert_fill_queue(ImgConvertState *s)
 			return;
 		}
 		req->s = s;
+		req->status = s->status;
 		req->sector_num = s->sector_num;
 		req->nb_sectors = n;
 		req->buf = blk_blockalign(s->target, s->buf_sectors * BDRV_SECTOR_SIZE);
@@ -1576,6 +1581,9 @@ static int convert_do_copy(ImgConvertState *s)
         main_loop_wait(false);
     }
     ret = s->ret;
+    if (ret) {
+        goto fail;
+    }
 
     if (s->compressed) {
         /* signal EOF to align */
