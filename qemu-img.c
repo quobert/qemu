@@ -1221,7 +1221,7 @@ enum ImgConvertBlockStatus {
     BLK_BACKING_FILE,
 };
 
-#define CONVERT_MAX_INFLIGHT 2
+#define CONVERT_MAX_INFLIGHT 4
 
 typedef struct ImgConvertState {
     BlockBackend **src;
@@ -1273,6 +1273,7 @@ static int convert_iteration_sectors(ImgConvertState *s, int64_t sector_num)
         ret = bdrv_get_block_status(blk_bs(s->src[s->src_cur]),
                                     sector_num - s->src_cur_offset,
                                     n, &n);
+        printf("get_blk_status total %ld sector_num %ld left %ld n %d\n", s->total_sectors, sector_num, s->total_sectors - sector_num, n);
         if (ret < 0) {
             return ret;
         }
@@ -1317,7 +1318,6 @@ static int convert_iteration_sectors(ImgConvertState *s, int64_t sector_num)
 
 typedef struct convert_req {
     Coroutine *co;
-    QEMUBH *bh;
     ImgConvertState *s;
     int64_t sector_num;
     int nb_sectors;
@@ -1480,12 +1480,13 @@ static void convert_copy_co(void *opaque)
 	}
 	qemu_vfree(req->buf);
 	req->s->in_flight--;
-	convert_fill_queue(req->s);
+	//convert_fill_queue(req->s);
 out:
 	if (!req->s->ret) {
 		req->s->ret = ret;
 	}
-	free(req);
+	//~ req->bh = qemu_bh_new(convert_copy_co_bh, req);
+	//~ qemu_bh_schedule(req->bh);
 }
 
 static void convert_fill_queue(ImgConvertState *s)
@@ -1493,7 +1494,9 @@ static void convert_fill_queue(ImgConvertState *s)
 	while (s->sector_num < s->total_sectors &&
 	       !s->ret && s->in_flight < CONVERT_MAX_INFLIGHT) {
 		convert_req *req;
+		printf("before convert iterate sectors: sector_num %ld\n", s->sector_num);
 		int n = convert_iteration_sectors(s, s->sector_num);
+		printf("after convert iterate sectors: sector_num %ld n %d status %d\n", s->sector_num, n, s->status);
 		if (n < 0) {
 			if (!s->ret) {
 				s->ret = n;
@@ -1516,8 +1519,8 @@ static void convert_fill_queue(ImgConvertState *s)
 		req->sector_num = s->sector_num;
 		req->nb_sectors = n;
 		req->buf = blk_blockalign(s->target, s->buf_sectors * BDRV_SECTOR_SIZE);
-		req->co = qemu_coroutine_create(convert_copy_co);
 		s->sector_num += n;
+		req->co = qemu_coroutine_create(convert_copy_co);
 		qemu_coroutine_enter(req->co, req);
 	}
 }
@@ -1579,7 +1582,11 @@ static int convert_do_copy(ImgConvertState *s)
     while (s->sector_num < s->total_sectors ||
         s->in_flight) {
         main_loop_wait(false);
+        convert_fill_queue(s);
     }
+    
+    printf("sector_num %ld total %ld in_flight %d\n", s->sector_num, s->total_sectors, s->in_flight);
+    
     ret = s->ret;
     if (ret) {
         goto fail;
