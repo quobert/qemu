@@ -331,6 +331,11 @@ static int64_t nfs_client_open(NFSClient *client, const char *filename,
             nfs_set_tcp_syncnt(client->context, val);
 #ifdef LIBNFS_FEATURE_READAHEAD
         } else if (!strcmp(qp->p[i].name, "readahead")) {
+            if (open_flags & BDRV_O_NOCACHE) {
+                error_setg(errp, "Cannot enable NFS readahead "
+                                 "if cache.direct = on");
+                goto fail;
+            }
             if (val > QEMU_NFS_MAX_READAHEAD_SIZE) {
                 error_report("NFS Warning: Truncating NFS readahead"
                              " size to %d", QEMU_NFS_MAX_READAHEAD_SIZE);
