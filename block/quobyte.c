@@ -287,6 +287,7 @@ static int quobyte_file_open(BlockDriverState *bs, QDict *options, int flags,
         goto out;
     }
     bs->total_sectors = ret;
+    bs->request_alignment = 4096;
     ret = 0;
 out:
     qemu_opts_del(opts);
