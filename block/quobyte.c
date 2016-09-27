@@ -42,62 +42,145 @@ typedef struct QuobyteClient {
     blkcnt_t st_blocks;
     /* XXX: this is needed until fstat is in libquobyte */
     char *path;
+    int ctx;
+    AioContext *aio_context;
 } QuobyteClient;
 
-static int coroutine_fn quobyte_co_readv_sync(BlockDriverState *bs,
+typedef struct QuobyteRequest {
+  int result;
+  int complete;
+  struct quobyte_iocb iocb;
+  Coroutine *co;
+  QEMUBH *bh;
+  QuobyteClient *client;
+} QuobyteRequest;
+
+#define QUOBYTE_CONCURRENT_REQS 4
+
+static void quobyte_block_destroy(void) __attribute__((destructor));
+
+static void quobyte_co_generic_bh_cb(void *opaque)
+{
+    QuobyteRequest *req = opaque;
+    req->complete = 1;
+    qemu_bh_delete(req->bh);
+    qemu_coroutine_enter(req->co, NULL);
+}
+
+static void
+quobyte_co_generic_cb(QuobyteRequest *req, int ret)
+{
+    req->result = ret;
+    if (req->co) {
+        req->bh = aio_bh_new(req->client->aio_context,
+                             quobyte_co_generic_bh_cb, req);
+        qemu_bh_schedule(req->bh);
+    } else {
+        req->complete = 1;
+    }
+}
+
+static void quobyte_co_init_request(QuobyteClient *client, QuobyteRequest *req)
+{
+    *req = (QuobyteRequest) {
+        .co               = qemu_coroutine_self(),
+        .client           = client,
+        .iocb = (struct quobyte_iocb) { .io_context  = client->ctx,
+                                        .file_handle = client->fh,
+                                      }
+    };
+}
+
+static int coroutine_fn quobyte_co_readv(BlockDriverState *bs,
                                      int64_t sector_num, int nb_sectors,
                                      QEMUIOVector *iov)
 {
     QuobyteClient *client = bs->opaque;
-    int ret;
-    char *buf = g_malloc(nb_sectors * BDRV_SECTOR_SIZE);
+    QuobyteRequest req;
 
-    ret = quobyte_read(client->fh, buf, sector_num * BDRV_SECTOR_SIZE,
-                       nb_sectors * BDRV_SECTOR_SIZE);
+    quobyte_co_init_request(client, &req);
+    req.iocb.op_code = READ;
+    req.iocb.buffer = g_malloc(nb_sectors * BDRV_SECTOR_SIZE);
+    req.iocb.offset = sector_num * BDRV_SECTOR_SIZE;
+    req.iocb.length = nb_sectors * BDRV_SECTOR_SIZE;
 
-    if (ret > iov->size || ret < 0) {
-        g_free(buf);
+    if (quobyte_aio_submit_with_callback(client->ctx, &req.iocb, (void*) quobyte_co_generic_cb, &req)) {
         return -EIO;
     }
 
-    qemu_iovec_from_buf(iov, 0, buf, ret);
-    g_free(buf);
+    while (!req.complete) {
+        qemu_coroutine_yield();
+    }
+
+    if (req.result > iov->size || req.result < 0) {
+        g_free(req.iocb.buffer);
+        return -EIO;
+    }
+
+    qemu_iovec_from_buf(iov, 0, req.iocb.buffer, req.result);
+    g_free(req.iocb.buffer);
 
     /* zero pad short reads */
-    if (ret < iov->size) {
-        qemu_iovec_memset(iov, ret, 0, iov->size - ret);
+    if (req.result < iov->size) {
+        qemu_iovec_memset(iov, req.result, 0, iov->size - req.result);
     }
 
     return 0;
 }
 
-static int coroutine_fn quobyte_co_writev_sync(BlockDriverState *bs,
-                                        int64_t sector_num, int nb_sectors,
-                                        QEMUIOVector *iov)
+static int coroutine_fn quobyte_co_writev(BlockDriverState *bs,
+                                          int64_t sector_num, int nb_sectors,
+                                          QEMUIOVector *iov)
 {
     QuobyteClient *client = bs->opaque;
-    int ret;
-    char *buf = g_malloc(nb_sectors * BDRV_SECTOR_SIZE);
+    QuobyteRequest req;
 
-    qemu_iovec_to_buf(iov, 0, buf, nb_sectors * BDRV_SECTOR_SIZE);
+    quobyte_co_init_request(client, &req);
+    req.iocb.op_code = WRITE;
+    req.iocb.buffer = g_malloc(nb_sectors * BDRV_SECTOR_SIZE);
+    req.iocb.offset = sector_num * BDRV_SECTOR_SIZE;
+    req.iocb.length = nb_sectors * BDRV_SECTOR_SIZE;
 
-    ret = quobyte_write(client->fh, buf, sector_num * BDRV_SECTOR_SIZE,
-                        nb_sectors * BDRV_SECTOR_SIZE);
+    qemu_iovec_to_buf(iov, 0, req.iocb.buffer, nb_sectors * BDRV_SECTOR_SIZE);
 
-    g_free(buf);
+    if (quobyte_aio_submit_with_callback(client->ctx, &req.iocb, (void*) quobyte_co_generic_cb, &req)) {
+        return -EIO;
+    }
 
-    if (ret != nb_sectors * BDRV_SECTOR_SIZE) {
+    while (!req.complete) {
+        qemu_coroutine_yield();
+    }
+
+    g_free(req.iocb.buffer);
+
+    if (req.result != nb_sectors * BDRV_SECTOR_SIZE) {
         return -EIO;
     }
 
     return 0;
 }
 
-static int coroutine_fn quobyte_co_flush_sync(BlockDriverState *bs)
+static int coroutine_fn quobyte_co_flush(BlockDriverState *bs)
 {
     QuobyteClient *client = bs->opaque;
+    QuobyteRequest req;
 
-    return quobyte_fsync(client->fh) ? -EIO : 0;
+    quobyte_co_init_request(client, &req);
+    req.iocb.op_code = FSYNC;
+
+    if (quobyte_aio_submit_with_callback(client->ctx, &req.iocb, (void*) quobyte_co_generic_cb, &req)) {
+        return -EIO;
+    }
+
+    while (!req.complete) {
+        qemu_coroutine_yield();
+    }
+
+    if (req.result) {
+        return -EIO;
+    }
+
+    return 0;
 }
 
 /* TODO Convert to fine grained options */
@@ -114,28 +197,11 @@ static QemuOptsList runtime_opts = {
     },
 };
 
-//~ static void quobyte_detach_aio_context(BlockDriverState *bs)
-//~ {
-    //~ QuobyteClient *client = bs->opaque;
-//~ 
-    //~ aio_set_fd_handler(client->aio_context, quobyte_get_fd(client->context),
-                       //~ false, NULL, NULL, NULL);
-    //~ client->events = 0;
-//~ }
-//~ 
-//~ static void quobyte_attach_aio_context(BlockDriverState *bs,
-                                   //~ AioContext *new_context)
-//~ {
-    //~ QuobyteClient *client = bs->opaque;
-//~ 
-    //~ client->aio_context = new_context;
-    //~ quobyte_set_events(client);
-//~ }
-//~ 
 static void quobyte_client_close(QuobyteClient *client)
 {
     g_free(client->path);
     if (client->fh) {
+        quobyte_aio_destroy(client->ctx);
         quobyte_close(client->fh);
     }
     memset(client, 0, sizeof(QuobyteClient));
@@ -171,7 +237,7 @@ static int64_t quobyte_client_open(QuobyteClient *client, const char *filename,
             error_setg(errp, "Registration failed.");
             goto fail;
         }
-        quobyteRegistry = uri->server;
+        quobyteRegistry = g_strdup(uri->server);
     }
     //XXX: check if all connections go to the same registry
 
@@ -190,6 +256,7 @@ static int64_t quobyte_client_open(QuobyteClient *client, const char *filename,
 
     ret = DIV_ROUND_UP(st.st_size, BDRV_SECTOR_SIZE);
     client->st_blocks = st.st_blocks;
+    client->ctx = quobyte_aio_setup(QUOBYTE_CONCURRENT_REQS);
     goto out;
 fail:
 out:
@@ -203,6 +270,8 @@ static int quobyte_file_open(BlockDriverState *bs, QDict *options, int flags,
     int64_t ret;
     QemuOpts *opts;
     Error *local_err = NULL;
+
+    client->aio_context = bdrv_get_aio_context(bs);
 
     opts = qemu_opts_create(&runtime_opts, NULL, 0, &error_abort);
     qemu_opts_absorb_qdict(opts, options, &local_err);
@@ -243,11 +312,13 @@ static int quobyte_file_create(const char *url, QemuOpts *opts, Error **errp)
     int64_t total_size = 0;
     QuobyteClient *client = g_new0(QuobyteClient, 1);
 
+    client->aio_context = qemu_get_aio_context();
+
     /* Read out options */
     total_size = ROUND_UP(qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0),
                           BDRV_SECTOR_SIZE);
 
-    ret = quobyte_client_open(client, url, O_CREAT, errp, 0);
+    ret = quobyte_client_open(client, url, O_CREAT | O_RDWR, errp, 0);
     if (ret < 0) {
         goto out;
     }
@@ -282,6 +353,18 @@ static int quobyte_file_truncate(BlockDriverState *bs, int64_t offset)
 }
 
 
+static void quobyte_attach_aio_context(BlockDriverState *bs,
+                                       AioContext *new_context)
+{
+    QuobyteClient *client = bs->opaque;
+    client->aio_context = new_context;
+}
+
+static void quobyte_detach_aio_context(BlockDriverState *bs)
+{
+
+}
+
 static BlockDriver bdrv_quobyte = {
     .format_name                    = "quobyte",
     .protocol_name                  = "quobyte",
@@ -298,14 +381,24 @@ static BlockDriver bdrv_quobyte = {
     .bdrv_close                     = quobyte_file_close,
     .bdrv_create                    = quobyte_file_create,
 
-    .bdrv_co_readv                  = quobyte_co_readv_sync,
-    .bdrv_co_writev                 = quobyte_co_writev_sync,
-    .bdrv_co_flush_to_disk          = quobyte_co_flush_sync,
+    .bdrv_co_readv                  = quobyte_co_readv,
+    .bdrv_co_writev                 = quobyte_co_writev,
+    .bdrv_co_flush_to_disk          = quobyte_co_flush,
+
+    .bdrv_attach_aio_context        = quobyte_attach_aio_context,
+    .bdrv_detach_aio_context        = quobyte_detach_aio_context,
 };
 
 static void quobyte_block_init(void)
 {
     bdrv_register(&bdrv_quobyte);
+}
+
+static void quobyte_block_destroy(void) {
+    if (quobyteRegistry) {
+        quobyte_destroy_adapter();
+        g_free(quobyteRegistry);
+    }
 }
 
 block_init(quobyte_block_init);
