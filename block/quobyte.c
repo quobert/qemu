@@ -100,9 +100,14 @@ static int coroutine_fn quobyte_co_readv(BlockDriverState *bs,
 
     quobyte_co_init_request(client, &req);
     req.iocb.op_code = READ;
-    req.iocb.buffer = g_malloc(nb_sectors * BDRV_SECTOR_SIZE);
     req.iocb.offset = sector_num * BDRV_SECTOR_SIZE;
     req.iocb.length = nb_sectors * BDRV_SECTOR_SIZE;
+
+    if (iov->niov > 1) {
+        req.iocb.buffer = g_malloc(nb_sectors * BDRV_SECTOR_SIZE);
+    } else {
+        req.iocb.buffer = iov->iov[0].iov_base;
+    }
 
     if (quobyte_aio_submit_with_callback(client->ctx, &req.iocb, (void*) quobyte_co_generic_cb, &req)) {
         return -EIO;
@@ -113,12 +118,16 @@ static int coroutine_fn quobyte_co_readv(BlockDriverState *bs,
     }
 
     if (req.result > iov->size || req.result < 0) {
-        g_free(req.iocb.buffer);
+        if (iov->niov > 1) {
+            g_free(req.iocb.buffer);
+        }
         return -EIO;
     }
 
-    qemu_iovec_from_buf(iov, 0, req.iocb.buffer, req.result);
-    g_free(req.iocb.buffer);
+    if (iov->niov > 1) {
+        qemu_iovec_from_buf(iov, 0, req.iocb.buffer, req.result);
+        g_free(req.iocb.buffer);
+    }
 
     /* zero pad short reads */
     if (req.result < iov->size) {
@@ -137,11 +146,15 @@ static int coroutine_fn quobyte_co_writev(BlockDriverState *bs,
 
     quobyte_co_init_request(client, &req);
     req.iocb.op_code = WRITE;
-    req.iocb.buffer = g_malloc(nb_sectors * BDRV_SECTOR_SIZE);
     req.iocb.offset = sector_num * BDRV_SECTOR_SIZE;
     req.iocb.length = nb_sectors * BDRV_SECTOR_SIZE;
 
-    qemu_iovec_to_buf(iov, 0, req.iocb.buffer, nb_sectors * BDRV_SECTOR_SIZE);
+    if (iov->niov > 1) {
+        req.iocb.buffer = g_malloc(nb_sectors * BDRV_SECTOR_SIZE);
+        qemu_iovec_to_buf(iov, 0, req.iocb.buffer, nb_sectors * BDRV_SECTOR_SIZE);
+    } else {
+        req.iocb.buffer = iov->iov[0].iov_base;
+    }
 
     if (quobyte_aio_submit_with_callback(client->ctx, &req.iocb, (void*) quobyte_co_generic_cb, &req)) {
         return -EIO;
@@ -151,7 +164,9 @@ static int coroutine_fn quobyte_co_writev(BlockDriverState *bs,
         qemu_coroutine_yield();
     }
 
-    g_free(req.iocb.buffer);
+    if (iov->niov > 1) {
+        g_free(req.iocb.buffer);
+    }
 
     if (req.result != nb_sectors * BDRV_SECTOR_SIZE) {
         return -EIO;
