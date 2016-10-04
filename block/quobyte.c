@@ -259,8 +259,10 @@ static int64_t quobyte_client_open(QuobyteClient *client, const char *filename,
             goto fail;
         }
         quobyteRegistry = g_strdup(uri->server);
+    } else if (strncmp(uri->server, quobyteRegistry, strlen(quobyteRegistry))) {
+        error_setg(errp, "All connections must go to the same Quobyte registry.");
+        goto fail;
     }
-    //XXX: check if all connections go to the same registry
 
     quobyteClients++;
 
