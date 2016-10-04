@@ -267,7 +267,7 @@ static int64_t quobyte_client_open(QuobyteClient *client, const char *filename,
     quobyteClients++;
 
     client->path = g_strdup(uri->path);
-    client->fh = quobyte_open(client->path, flags, 0600);
+    client->fh = quobyte_open(client->path, flags | O_DIRECT, 0600);
     if (!client->fh) {
         error_setg(errp, "Failed to open/create file: %s", strerror(errno));
         goto fail;
