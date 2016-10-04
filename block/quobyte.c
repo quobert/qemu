@@ -57,8 +57,6 @@ typedef struct QuobyteRequest {
 
 #define QUOBYTE_CONCURRENT_REQS 16
 
-static void quobyte_block_destroy(void) __attribute__((destructor));
-
 static void quobyte_co_generic_bh_cb(void *opaque)
 {
     QuobyteRequest *req = opaque;
@@ -212,13 +210,23 @@ static QemuOptsList runtime_opts = {
     },
 };
 
+static char *quobyteRegistry;
+static unsigned quobyteClients;
+
 static void quobyte_client_close(QuobyteClient *client)
 {
     g_free(client->path);
+    quobyteClients--;
     if (client->fh) {
         quobyte_aio_destroy(client->ctx);
         quobyte_close(client->fh);
     }
+    if (!quobyteClients && quobyteRegistry) {
+        quobyte_destroy_adapter();
+        g_free(quobyteRegistry);
+        quobyteRegistry = NULL;
+    }
+
     memset(client, 0, sizeof(QuobyteClient));
 }
 
@@ -227,8 +235,6 @@ static void quobyte_file_close(BlockDriverState *bs)
     QuobyteClient *client = bs->opaque;
     quobyte_client_close(client);
 }
-
-static char *quobyteRegistry = NULL;
 
 static int64_t quobyte_client_open(QuobyteClient *client, const char *filename,
                                    int flags, Error **errp, int open_flags)
@@ -256,6 +262,8 @@ static int64_t quobyte_client_open(QuobyteClient *client, const char *filename,
     }
     //XXX: check if all connections go to the same registry
 
+    quobyteClients++;
+
     client->path = g_strdup(uri->path);
     client->fh = quobyte_open(client->path, flags, 0600);
     if (!client->fh) {
@@ -274,6 +282,7 @@ static int64_t quobyte_client_open(QuobyteClient *client, const char *filename,
     client->ctx = quobyte_aio_setup(QUOBYTE_CONCURRENT_REQS);
     goto out;
 fail:
+    quobyte_client_close(client);
 out:
     uri_free(uri);
     return ret;
@@ -408,13 +417,6 @@ static BlockDriver bdrv_quobyte = {
 static void quobyte_block_init(void)
 {
     bdrv_register(&bdrv_quobyte);
-}
-
-static void quobyte_block_destroy(void) {
-    if (quobyteRegistry) {
-        quobyte_destroy_adapter();
-        g_free(quobyteRegistry);
-    }
 }
 
 block_init(quobyte_block_init);
