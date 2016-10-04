@@ -55,7 +55,7 @@ typedef struct QuobyteRequest {
   QuobyteClient *client;
 } QuobyteRequest;
 
-#define QUOBYTE_CONCURRENT_REQS 4
+#define QUOBYTE_CONCURRENT_REQS 16
 
 static void quobyte_block_destroy(void) __attribute__((destructor));
 
